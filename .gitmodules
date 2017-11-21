@@ -1,0 +1,3 @@
+[submodule "3rd/Moe.Core"]
+	path = 3rd/Moe.Core
+	url = http://git.bakachu.cn/9chu/Moe.Core.git
