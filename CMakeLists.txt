@@ -24,6 +24,7 @@ endif()
 file(GLOB_RECURSE MOE_UV_SRC src/*.cpp include/*.hpp)
 
 # 根据平台决定Context汇编代码
+add_definitions(-DBOOST_CONTEXT_EXPORT=)
 if(UNIX)
     if(ANDROID) # Android
         if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm")
