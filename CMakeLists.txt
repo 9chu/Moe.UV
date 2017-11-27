@@ -15,16 +15,19 @@ set(CMAKE_CXX_STANDARD 11)
 
 if(MSVC)
     add_definitions(-D_WIN32_WINNT=0x0600 -D_GNU_SOURCE -D_CRT_SECURE_NO_WARNINGS)
+    
+    enable_language(CXX ASM_MASM)
 else()
     set(CMAKE_CXX_FLAGS "-g -Wall -Wextra")
     set(CMAKE_C_FLAGS "-g -Wall -Wextra")
+    
+    enable_language(CXX ASM)
 endif()
 
 # 目标
 file(GLOB_RECURSE MOE_UV_SRC src/*.cpp include/*.hpp)
 
 # 根据平台决定Context汇编代码
-add_definitions(-DBOOST_CONTEXT_EXPORT=)
 if(UNIX)
     if(ANDROID) # Android
         if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm")
@@ -61,14 +64,13 @@ elseif(WIN32) # Windows PC
     if(MSVC)
         set(MOE_UV_CONTEXT_ASM_EXT "ms_pe_masm.asm")
     else()
-        set(MOE_UV_CONTEXT_ASM_EXT "ms_pe_gas.asm")
+        set(MOE_UV_CONTEXT_ASM_EXT "ms_pe_gas.S")
     endif()
 endif()
 
 set(MOE_UV_ASM_SOURCES
     "src/asm/make_${MOE_UV_CPU_ARCH}_${MOE_UV_CONTEXT_ASM_EXT}"
-    "src/asm/jump_${MOE_UV_CPU_ARCH}_${MOE_UV_CONTEXT_ASM_EXT}"
-    "src/asm/ontop_${MOE_UV_CPU_ARCH}_${MOE_UV_CONTEXT_ASM_EXT}")
+    "src/asm/jump_${MOE_UV_CPU_ARCH}_${MOE_UV_CONTEXT_ASM_EXT}")
 
 add_library(MoeUV STATIC ${MOE_UV_SRC} ${MOE_UV_ASM_SOURCES})
 target_link_libraries(MoeUV MoeCore uv)

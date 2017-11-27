@@ -39,10 +39,10 @@
  *******************************************************/
 
 .text
-.globl make_fcontext
+.globl MoeContextMake
 .align 2
-.type make_fcontext,%function
-make_fcontext:
+.type MoeContextMake,%function
+MoeContextMake:
     @ shift address in A1 to lower 16 byte boundary
     bic  a1, a1, #15
 
@@ -73,7 +73,7 @@ finish:
     mov  a1, #0
     @ exit application
     bl  _exit@PLT
-.size make_fcontext,.-make_fcontext
+.size MoeContextMake,.-MoeContextMake
 
 @ Mark that we don't need executable stack.
 .section .note.GNU-stack,"",%progbits

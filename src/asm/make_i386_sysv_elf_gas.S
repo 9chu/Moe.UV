@@ -25,10 +25,10 @@
  ****************************************************************************************/
 
 .text
-.globl make_fcontext
+.globl MoeContextMake
 .align 2
-.type make_fcontext,@function
-make_fcontext:
+.type MoeContextMake,@function
+MoeContextMake:
     /* first arg of make_fcontext() == top of context-stack */
     movl  0x4(%esp), %eax
 
@@ -100,7 +100,7 @@ finish:
     /* exit application */
     call  _exit@PLT
     hlt
-.size make_fcontext,.-make_fcontext
+.size MoeContextMake,.-MoeContextMake
 
 /* Mark that we don't need executable stack.  */
 .section .note.GNU-stack,"",%progbits

@@ -25,16 +25,14 @@
  ****************************************************************************************/
 
 .text
-.globl jump_fcontext
+.globl MoeContextJump
 .align 2
-.type jump_fcontext,@function
-jump_fcontext:
+.type MoeContextJump,@function
+MoeContextJump:
     leal  -0x18(%esp), %esp  /* prepare stack */
 
-#if !defined(BOOST_USE_TSX)
     stmxcsr  (%esp)     /* save MMX control- and status-word */
     fnstcw   0x4(%esp)  /* save x87 control-word */
-#endif
 
     movl  %edi, 0x8(%esp)  /* save EDI */
     movl  %esi, 0xc(%esp)  /* save ESI */
@@ -62,10 +60,8 @@ jump_fcontext:
 
     movl  0x18(%esp), %ecx  /* restore EIP */
 
-#if !defined(BOOST_USE_TSX)
     ldmxcsr  (%esp)     /* restore MMX control- and status-word */
     fldcw    0x4(%esp)  /* restore x87 control-word */
-#endif
 
     movl  0x8(%esp), %edi  /* restore EDI */
     movl  0xc(%esp), %esi  /* restore ESI */
@@ -76,7 +72,7 @@ jump_fcontext:
 
     /* jump to context */
     jmp *%ecx
-.size jump_fcontext,.-jump_fcontext
+.size MoeContextJump,.-MoeContextJump
 
 /* Mark that we don't need executable stack.  */
 .section .note.GNU-stack,"",%progbits

@@ -25,9 +25,9 @@
  ****************************************************************************************/
 
 .text
-.globl _make_fcontext
+.globl _MoeContextMake
 .align 8
-_make_fcontext:
+_MoeContextMake:
     /* first arg of make_fcontext() == top of context-stack */
     movq  %rdi, %rax
 

@@ -53,9 +53,9 @@
 
 .text
 .align  2
-.global make_fcontext
-.type   make_fcontext, %function
-make_fcontext:
+.global MoeContextMake
+.type   MoeContextMake, %function
+MoeContextMake:
     # shift address in x0 (allocated stack) to lower 16 byte boundary
     and x0, x0, ~0xF
 
@@ -79,6 +79,6 @@ finish:
     # exit application
     bl  _exit
 
-.size   make_fcontext,.-make_fcontext
+.size   MoeContextMake,.-MoeContextMake
 # Mark that we don't need executable stack.
 .section .note.GNU-stack,"",%progbits

@@ -23,12 +23,12 @@
 *  --------------------------------------------------------------------------------- *
 **************************************************************************************/
 
-.file	"ontop_i386_ms_pe_gas.asm"
+.file	"jump_i386_ms_pe_gas.asm"
 .text
 .p2align 4,,15
-.globl	_ontop_fcontext
-.def	_ontop_fcontext;	.scl	2;	.type	32;	.endef
-_ontop_fcontext:
+.globl	_MoeContextJump
+.def	_MoeContextJump;	.scl	2;	.type	32;	.endef
+_MoeContextJump:
     /* prepare stack */
     leal  -0x2c(%esp), %esp
 
@@ -62,26 +62,14 @@ _ontop_fcontext:
     movl  %ebx, 0x24(%esp)  /* save EBX */
     movl  %ebp, 0x28(%esp)  /* save EBP */
 
-    /* store ESP (pointing to context-data) in ECX */
-    movl  %esp, %ecx
+    /* store ESP (pointing to context-data) in EAX */
+    movl  %esp, %eax
 
-    /* first arg of ontop_fcontext() == fcontext to jump to */
-    movl  0x30(%esp), %eax
-
-	/* pass parent fcontext_t */
-	movl  %ecx, 0x30(%eax)
-
-    /* second arg of ontop_fcontext() == data to be transferred */
-    movl  0x34(%esp), %ecx
-
-	/* pass data */
-	movl  %ecx, 0x34(%eax)
-
-    /* third arg of ontop_fcontext() == ontop-function */
-    movl  0x38(%esp), %ecx
-
-    /* restore ESP (pointing to context-data) from EDX */
-    movl  %eax, %esp
+    /* firstarg of jump_fcontext() == fcontext to jump to */
+    movl  0x30(%esp), %ecx
+    
+    /* restore ESP (pointing to context-data) from ECX */
+    movl  %ecx, %esp
 
 #if !defined(BOOST_USE_TSX)
     /* restore MMX control- and status-word */
@@ -93,20 +81,22 @@ _ontop_fcontext:
     /* restore NT_TIB into EDX */
     movl  %fs:(0x18), %edx
     /* restore fiber local storage */
-    movl  0x8(%esp), %eax
-    movl  %eax, 0x10(%edx)
+    movl  0x8(%esp), %ecx
+    movl  %ecx, 0x10(%edx)
     /* restore current deallocation stack */
-    movl  0xc(%esp), %eax
-    movl  %eax, 0xe0c(%edx)
+    movl  0xc(%esp), %ecx
+    movl  %ecx, 0xe0c(%edx)
     /* restore current stack limit */
-    movl  0x10(%esp), %eax
-    movl  %eax, 0x08(%edx)
+    movl  0x10(%esp), %ecx
+    movl  %ecx, 0x8(%edx)
     /* restore current stack base */
-    movl  0x14(%esp), %eax
-    movl  %eax, 0x04(%edx)
+    movl  0x14(%esp), %ecx
+    movl  %ecx, 0x4(%edx)
     /* restore current SEH exception list */
-    movl  0x18(%esp), %eax
-    movl  %eax, (%edx)
+    movl  0x18(%esp), %ecx
+    movl  %ecx, (%edx)
+
+    movl  0x2c(%esp), %ecx  /* restore EIP */
 
     movl  0x1c(%esp), %edi  /* restore EDI */
     movl  0x20(%esp), %esi  /* restore ESI */
@@ -114,12 +104,14 @@ _ontop_fcontext:
     movl  0x28(%esp), %ebp  /* restore EBP */
 
     /* prepare stack */
-    leal  0x2c(%esp), %esp
+    leal  0x30(%esp), %esp
 
-    /* keep return-address on stack */
+    /* return transfer_t */
+    /* FCTX == EAX, DATA == EDX */
+    movl  0x34(%eax), %edx
 
     /* jump to context */
-    jmp  *%ecx
+    jmp *%ecx
 
 .section .drectve
-.ascii " -export:\"ontop_fcontext\""
+.ascii " -export:\"MoeContextJump\""

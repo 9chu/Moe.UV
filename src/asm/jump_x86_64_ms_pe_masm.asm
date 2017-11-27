@@ -84,13 +84,12 @@
 
 .code
 
-jump_fcontext PROC BOOST_CONTEXT_EXPORT FRAME
+MoeContextJump PROC FRAME
     .endprolog
 
     ; prepare stack
     lea rsp, [rsp-0118h]
 
-IFNDEF BOOST_USE_TSX
     ; save XMM storage
     movaps  [rsp], xmm6
     movaps  [rsp+010h], xmm7
@@ -106,7 +105,6 @@ IFNDEF BOOST_USE_TSX
     stmxcsr  [rsp+0a0h]
     ; save x87 control-word
     fnstcw  [rsp+0a4h]
-ENDIF
 
     ; load NT_TIB
     mov  r10,  gs:[030h]
@@ -140,7 +138,6 @@ ENDIF
     ; restore RSP (pointing to context-data) from RDX
     mov  rsp, rdx
 
-IFNDEF BOOST_USE_TSX
     ; restore XMM storage
     movaps  xmm6, [rsp]
     movaps  xmm7, [rsp+010h]
@@ -156,7 +153,6 @@ IFNDEF BOOST_USE_TSX
     ldmxcsr  [rsp+0a0h]
     ; save x87 control-word
     fldcw   [rsp+0a4h]
-ENDIF
 
     ; load NT_TIB
     mov  r10,  gs:[030h]
@@ -201,5 +197,5 @@ ENDIF
 
     ; indirect jump to context
     jmp  r10
-jump_fcontext ENDP
+MoeContextJump ENDP
 END

@@ -52,10 +52,10 @@
  *******************************************************/
 
 .text
-.globl _make_fcontext
+.globl _MoeContextMake
 .balign 16
 
-_make_fcontext:
+_MoeContextMake:
     ; shift address in x0 (allocated stack) to lower 16 byte boundary
     and x0, x0, ~0xF
 

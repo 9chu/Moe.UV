@@ -24,16 +24,14 @@
 .model flat, c
 .code
 
-jump_fcontext PROC BOOST_CONTEXT_EXPORT
+MoeContextJump PROC
     ; prepare stack
     lea  esp, [esp-02ch]
 
-IFNDEF BOOST_USE_TSX
     ; save MMX control- and status-word
     stmxcsr  [esp]
     ; save x87 control-word
     fnstcw  [esp+04h]
-ENDIF
 
     assume  fs:nothing
     ; load NT_TIB into ECX
@@ -69,12 +67,10 @@ ENDIF
     ; restore ESP (pointing to context-data) from ECX
     mov  esp, ecx
 
-IFNDEF BOOST_USE_TSX
     ; restore MMX control- and status-word
     ldmxcsr  [esp]
     ; restore x87 control-word
     fldcw  [esp+04h]
-ENDIF
 
     assume  fs:nothing
     ; load NT_TIB into EDX
@@ -112,5 +108,5 @@ ENDIF
 
     ; jump to context
     jmp ecx
-jump_fcontext ENDP
+MoeContextJump ENDP
 END

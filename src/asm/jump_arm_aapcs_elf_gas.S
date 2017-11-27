@@ -39,10 +39,10 @@
  *******************************************************/
 
 .text
-.globl jump_fcontext
+.globl MoeContextJump
 .align 2
-.type jump_fcontext,%function
-jump_fcontext:
+.type MoeContextJump,%function
+MoeContextJump:
     @ save LR as PC
     push {lr}
     @ save hidden,V1-V8,LR
@@ -80,7 +80,7 @@ jump_fcontext:
 
     @ restore PC
     pop {pc}
-.size jump_fcontext,.-jump_fcontext
+.size MoeContextJump,.-MoeContextJump
 
 @ Mark that we don't need executable stack.
 .section .note.GNU-stack,"",%progbits

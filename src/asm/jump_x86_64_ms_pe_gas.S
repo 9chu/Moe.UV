@@ -86,18 +86,17 @@
 * ---------------------------------------------------------------------------------- *
 **************************************************************************************/
 
-.file	"ontop_x86_64_ms_pe_gas.asm"
+.file	"jump_x86_64_ms_pe_gas.asm"
 .text
 .p2align 4,,15
-.globl	ontop_fcontext
-.def	ontop_fcontext;	.scl	2;	.type	32;	.endef
-.seh_proc	ontop_fcontext
-ontop_fcontext:
+.globl	MoeContextJump
+.def	MoeContextJump;	.scl	2;	.type	32;	.endef
+.seh_proc	MoeContextJump
+MoeContextJump:
 .seh_endprologue
 
     leaq  -0x118(%rsp), %rsp /* prepare stack */
 
-#if !defined(BOOST_USE_TSX)
     /* save XMM storage */
     movaps  %xmm6, 0x0(%rsp)
     movaps  %xmm7, 0x10(%rsp)
@@ -111,7 +110,6 @@ ontop_fcontext:
     movaps  %xmm15, 0x90(%rsp)
     stmxcsr  0xa0(%rsp)  /* save MMX control- and status-word */
     fnstcw   0xa4(%rsp)  /* save x87 control-word */
-#endif
 
     /* load NT_TIB */
     movq  %gs:(0x30), %r10
@@ -139,13 +137,12 @@ ontop_fcontext:
 
     movq  %rcx, 0x110(%rsp)  /* save hidden address of transport_t */
 
-    /* preserve RSP (pointing to context-data) in RCX */
-    movq  %rsp, %rcx
+    /* preserve RSP (pointing to context-data) in R9 */
+    movq  %rsp, %r9
 
     /* restore RSP (pointing to context-data) from RDX */
     movq  %rdx, %rsp
 
-#if !defined(BOOST_USE_TSX)
     /* restore XMM storage */
     movaps  0x0(%rsp), %xmm6
     movaps  0x10(%rsp), %xmm7
@@ -157,9 +154,8 @@ ontop_fcontext:
     movaps  0x70(%rsp), %xmm13
     movaps  0x80(%rsp), %xmm14
     movaps  0x90(%rsp), %xmm15
- 	ldmxcsr 0xa0(%rsp) /* restore MMX control- and status-word */
- 	fldcw   0xa4(%rsp) /* restore x87 control-word */
-#endif
+    ldmxcsr 0xa0(%rsp) /* restore MMX control- and status-word */
+    fldcw   0xa4(%rsp) /* restore x87 control-word */
 
     /* load NT_TIB */
     movq  %gs:(0x30), %r10
@@ -189,23 +185,21 @@ ontop_fcontext:
 
     leaq  0x118(%rsp), %rsp /* prepare stack */
 
-    /* keep return-address on stack */
+    /* restore return-address */
+    popq  %r10
 
     /* transport_t returned in RAX */
     /* return parent fcontext_t */
-    movq  %rcx, 0x0(%rax)
+    movq  %r9, 0x0(%rax)
     /* return data */
     movq  %r8, 0x8(%rax)
 
     /* transport_t as 1.arg of context-function */
-    /* RCX contains address of returned (hidden) transfer_t */
     movq  %rax, %rcx
-    /* RDX contains address of passed transfer_t */
-    movq  %rax, %rdx
 
     /* indirect jump to context */
-    jmp  *%r9
+    jmp  *%r10
 .seh_endproc
 
 .section .drectve
-.ascii " -export:\"ontop_fcontext\""
+.ascii " -export:\"MoeContextJump\""

@@ -52,9 +52,9 @@
  *******************************************************/
 
 .text
-.globl _jump_fcontext
+.globl _MoeContextJump
 .balign 16
-_jump_fcontext:
+_MoeContextJump:
     ; prepare stack for GP + FPU
     sub  sp, sp, #0xb0
 

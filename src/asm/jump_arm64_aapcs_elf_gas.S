@@ -53,9 +53,9 @@
 
 .text
 .align  2
-.global jump_fcontext
-.type   jump_fcontext, %function
-jump_fcontext:
+.global MoeContextJump
+.type   MoeContextJump, %function
+MoeContextJump:
     # prepare stack for GP + FPU
     sub  sp, sp, #0xb0
 
@@ -108,6 +108,6 @@ jump_fcontext:
     add  sp, sp, #0xb0
 
     ret x4
-.size   jump_fcontext,.-jump_fcontext
+.size   MoeContextJump,.-MoeContextJump
 # Mark that we don't need executable stack.
 .section .note.GNU-stack,"",%progbits

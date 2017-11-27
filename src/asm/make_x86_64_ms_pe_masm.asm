@@ -87,7 +87,7 @@ EXTERN  _exit:PROC
 .code
 
 ; generate function table entry in .pdata and unwind information in
-make_fcontext PROC BOOST_CONTEXT_EXPORT FRAME
+MoeContextMake PROC FRAME
     ; .xdata for a function's structured exception handling unwind behavior
     .endprolog
 
@@ -118,11 +118,11 @@ make_fcontext PROC BOOST_CONTEXT_EXPORT FRAME
     mov  [rax+0c0h], rcx
     ; save address of context stack limit as 'dealloction stack'
     mov  [rax+0b8h], rcx
-	; set fiber-storage to zero
-	xor  rcx, rcx
+    ; set fiber-storage to zero
+    xor  rcx, rcx
     mov  [rax+0b0h], rcx
 
-	; save MMX control- and status-word
+    ; save MMX control- and status-word
     stmxcsr  [rax+0a0h]
     ; save x87 control-word
     fnstcw  [rax+0a4h]
@@ -159,5 +159,5 @@ finish:
     ; exit application
     call  _exit
     hlt
-make_fcontext ENDP
+MoeContextMake ENDP
 END

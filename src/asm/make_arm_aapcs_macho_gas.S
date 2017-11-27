@@ -39,9 +39,9 @@
  *******************************************************/
 
 .text
-.globl _make_fcontext
+.globl _MoeContextMake
 .align 2
-_make_fcontext:
+_MoeContextMake:
     @ shift address in A1 to lower 16 byte boundary
     bic  a1, a1, #15
 

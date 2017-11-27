@@ -39,9 +39,9 @@
  *******************************************************/
 
 .text
-.globl _jump_fcontext
+.globl _MoeContextJump
 .align 2
-_jump_fcontext:
+_MoeContextJump:
     @ save LR as PC
     push {lr}
     @ save hidden,V1-V8,LR

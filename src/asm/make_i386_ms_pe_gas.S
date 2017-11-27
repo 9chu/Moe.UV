@@ -26,9 +26,9 @@
 .file	"make_i386_ms_pe_gas.asm"
 .text
 .p2align 4,,15
-.globl	_make_fcontext
-.def	_make_fcontext;	.scl	2;	.type	32;	.endef
-_make_fcontext:
+.globl	_MoeContextMake
+.def	_MoeContextMake;	.scl	2;	.type	32;	.endef
+_MoeContextMake:
     /* first arg of make_fcontext() == top of context-stack */
     movl  0x04(%esp), %eax
 
@@ -64,8 +64,8 @@ _make_fcontext:
     movl  %ecx, 0x10(%eax)
     /* save bottom address of context-stack as 'dealloction stack' */
     movl  %ecx, 0xc(%eax)
-	/* set fiber-storage to zero */
-	xorl  %ecx, %ecx
+    /* set fiber-storage to zero */
+    xorl  %ecx, %ecx
     movl  %ecx, 0x8(%eax)
 
     /* third arg of make_fcontext() == address of context-function */
@@ -144,4 +144,4 @@ finish:
 .def	__exit;	.scl	2;	.type	32;	.endef  /* standard C library function */
 
 .section .drectve
-.ascii " -export:\"make_fcontext\""
+.ascii " -export:\"MoeContextMake\""
