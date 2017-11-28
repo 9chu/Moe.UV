@@ -4,11 +4,10 @@
  * @date 2017/11/28
  */
 #include <Moe.UV/GuardStack.hpp>
+#include <Moe.Core/Exception.hpp>
 
 #include <algorithm>
 #include <cmath>
-
-#include <Moe.Core/Exception.hpp>
 
 using namespace std;
 using namespace moe;
