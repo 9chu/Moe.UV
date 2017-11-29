@@ -248,7 +248,7 @@ void Scheduler::YieldCurrent()
     auto transfer = JumpContext(m_pMainThreadContext, nullptr);
     m_pMainThreadContext = transfer.State;
 
-    auto resumeType = static_cast<CoroutineResumeType>(reinterpret_cast<int>(transfer.Data));
+    auto resumeType = static_cast<CoroutineResumeType>(reinterpret_cast<ptrdiff_t>(transfer.Data));
     assert(resumeType == CoroutineResumeType::Normally);
 }
 
@@ -281,7 +281,7 @@ void Scheduler::SuspendCurrent(WaitHandle& handle)
     m_pMainThreadContext = transfer.State;
 
     // 检查是否需要抛出异常
-    auto resumeType = static_cast<CoroutineResumeType>(reinterpret_cast<int>(transfer.Data));
+    auto resumeType = static_cast<CoroutineResumeType>(reinterpret_cast<ptrdiff_t>(transfer.Data));
     if (resumeType == CoroutineResumeType::Exception)
     {
         auto exception = current->ExceptionPtr;
