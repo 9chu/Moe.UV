@@ -131,13 +131,16 @@ Scheduler::Scheduler(size_t stackSize)
 {
     if (t_pScheduler)
         MOE_THROW(InvalidCallException, "Scheduler is already existed");
+
     m_stSharedStack.Alloc(stackSize);  // 分配共享栈
+
     t_pScheduler = this;
 }
 
 Scheduler::~Scheduler()
 {
     assert(IsIdle());
+
     t_pScheduler = nullptr;
 }
 
