@@ -325,19 +325,88 @@ WaitHandle::WaitHandle()
 {
 }
 
+WaitHandle::WaitHandle(WaitHandle&& rhs)noexcept
+{
+    if (rhs.m_pScheduler && rhs.m_pHead)
+    {
+        auto scheduler = Scheduler::GetCurrent();
+        if (scheduler != rhs.m_pScheduler)
+        {
+            assert(false);
+            return;
+        }
+
+        std::swap(m_pScheduler, rhs.m_pScheduler);
+        m_pHead.Swap(rhs.m_pHead);
+
+        // 遍历并修正WaitHandle
+        auto current = m_pHead;
+        while (current)
+        {
+            assert(current->WaitHandle == &rhs);
+            current->WaitHandle = this;
+
+            current = current->WaitNext;
+        }
+    }
+}
+
 WaitHandle::~WaitHandle()
 {
     if (!Empty())
     {
         try
         {
-            MOE_THROW(WaitHandleCancelledException, "Wait handle cancelled");
+            MOE_THROW(OperationCancelledException, "Wait handle cancelled");
         }
         catch (...)
         {
             ResumeException(std::current_exception());
         }
     }
+}
+
+WaitHandle& WaitHandle::operator=(WaitHandle&& rhs)noexcept
+{
+    if (!Empty())
+    {
+        try
+        {
+            MOE_THROW(OperationCancelledException, "Wait handle cancelled");
+        }
+        catch (...)
+        {
+            ResumeException(std::current_exception());
+        }
+    }
+
+    assert(m_pScheduler == nullptr);
+    assert(m_pHead == nullptr);
+
+    if (rhs.m_pScheduler && rhs.m_pHead)
+    {
+        auto scheduler = Scheduler::GetCurrent();
+        if (scheduler != rhs.m_pScheduler)
+        {
+            assert(false);
+            return *this;
+        }
+
+        std::swap(m_pScheduler, rhs.m_pScheduler);
+        m_pHead.Swap(rhs.m_pHead);
+
+        // 遍历并修正WaitHandle
+        auto current = m_pHead;
+        while (current)
+        {
+            assert(current->WaitHandle == &rhs);
+            current->WaitHandle = this;
+
+            current = current->WaitNext;
+        }
+    }
+
+    return *this;
 }
 
 void WaitHandle::Resume()noexcept

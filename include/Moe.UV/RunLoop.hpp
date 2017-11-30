@@ -4,10 +4,12 @@
  * @date 2017/11/30
  */
 #pragma once
+#include "ObjectPool.hpp"
+#include "Coroutine.hpp"
+#include "IOHandle.hpp"
+
 #include <Moe.Core/Time.hpp>
 #include <Moe.Core/Utils.hpp>
-
-#include <uv.h>
 
 namespace moe
 {
@@ -19,6 +21,11 @@ namespace UV
     class RunLoop :
         public NonCopyable
     {
+        friend class IOHandle;
+
+    private:
+        static void OnUVIdle(::uv_idle_t* handle)noexcept;
+
     public:
         /**
          * @brief 获取当前线程上的RunLoop
@@ -34,7 +41,12 @@ namespace UV
         static Time::Tick Now()noexcept;
 
     public:
-        RunLoop();
+        /**
+         * @brief 构造消息循环
+         * @param coroutineSharedStackSize 协程的共享栈大小
+         */
+        RunLoop(size_t coroutineSharedStackSize=4*1024*1024);
+
         ~RunLoop();
 
         RunLoop(RunLoop&&)noexcept = delete;
@@ -46,7 +58,7 @@ namespace UV
          *
          * 运行循环直到所有句柄结束。
          */
-        void Run()noexcept;
+        void Run();
 
         /**
          * @brief 尽快结束循环
@@ -60,8 +72,14 @@ namespace UV
          */
         void UpdateTime()noexcept;
 
+    protected:  // 内部事件
+        void OnIdle()noexcept;
+
     private:
+        ObjectPool m_stObjectPool;
+        Scheduler m_stScheduler;
         ::uv_loop_t m_stLoop;
+        ::uv_idle_t m_stIdle;
     };
 }
 }

@@ -175,11 +175,6 @@ namespace UV
     };
 
     /**
-     * @brief 同步句柄被取消异常
-     */
-    MOE_DEFINE_EXCEPTION(WaitHandleCancelledException);
-
-    /**
      * @brief 同步句柄
      *
      * 用于协程的事件机制。
@@ -191,10 +186,10 @@ namespace UV
 
     public:
         WaitHandle();
+        WaitHandle(WaitHandle&& rhs)noexcept;
         ~WaitHandle();
 
-        WaitHandle(WaitHandle&&)noexcept = delete;
-        WaitHandle& operator=(WaitHandle&&)noexcept = delete;
+        WaitHandle& operator=(WaitHandle&& rhs)noexcept;
 
     public:
         /**

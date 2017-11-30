@@ -14,6 +14,9 @@
 #include <ws2ipdef.h>
 #include <ws2tcpip.h>
 
+#ifdef Yield  // fvck Windows
+#undef Yield
+#endif
 #ifdef max
 #undef max
 #endif
