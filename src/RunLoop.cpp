@@ -27,7 +27,7 @@ Time::Tick RunLoop::Now()noexcept
 {
     auto runloop = GetCurrent();
     if (!runloop)
-        return static_cast<Time::Tick>(Time::GetHiResTickCount());
+        return ::uv_hrtime();
     return ::uv_now(&runloop->m_stLoop);
 }
 
@@ -49,6 +49,7 @@ RunLoop::RunLoop(size_t coroutineSharedStackSize)
         ::uv_loop_close(&m_stLoop);
         throw;
     }
+    ::uv_unref(reinterpret_cast<uv_handle_t*>(&m_stIdle));  // 去除引用
 
     t_pRunLoop = this;
 }
@@ -65,7 +66,7 @@ RunLoop::~RunLoop()
     {
         MOE_DEBUG("Closing all alive handles");
 
-        while (::uv_loop_alive(&m_stLoop) != 0 && !m_stScheduler.IsIdle())
+        while (::uv_loop_alive(&m_stLoop) != 0 || !m_stScheduler.IsIdle())
         {
             ::uv_walk(&m_stLoop, IOHandle::OnUVCloseHandleWalker, nullptr);
             ::uv_run(&m_stLoop, UV_RUN_NOWAIT);  // 执行Close回调
