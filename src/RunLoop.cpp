@@ -56,20 +56,16 @@ RunLoop::RunLoop(size_t coroutineSharedStackSize)
 
 RunLoop::~RunLoop()
 {
-    t_pRunLoop = nullptr;
-
     // 关闭Idle句柄
     ::uv_close(reinterpret_cast<uv_handle_t*>(&m_stIdle), nullptr);
 
-    // 强制干掉所有句柄
+    // 等待所有句柄和请求结束
     if (::uv_loop_alive(&m_stLoop) != 0)
     {
-        MOE_DEBUG("Closing all alive handles");
-
         while (::uv_loop_alive(&m_stLoop) != 0 || !m_stScheduler.IsIdle())
         {
             ::uv_walk(&m_stLoop, IOHandle::OnUVCloseHandleWalker, nullptr);
-            ::uv_run(&m_stLoop, UV_RUN_NOWAIT);  // 执行Close回调
+            ::uv_run(&m_stLoop, UV_RUN_ONCE);  // 执行Close回调
 
             m_stScheduler.Schedule();
         }
@@ -80,18 +76,14 @@ RunLoop::~RunLoop()
     MOE_UV_LOG_ERROR(ret);
     assert(ret == 0);
 
-    MOE_DEBUG("Destroyed");
+    t_pRunLoop = nullptr;
 }
 
 void RunLoop::Run()
 {
-    MOE_DEBUG("Starting loop");
-
     MOE_UV_CHECK(::uv_idle_start(&m_stIdle, OnUVIdle));
     ::uv_run(&m_stLoop, UV_RUN_DEFAULT);
     ::uv_idle_stop(&m_stIdle);
-
-    MOE_DEBUG("Loop stopped");
 }
 
 void RunLoop::Stop()noexcept

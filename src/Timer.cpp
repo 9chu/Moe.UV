@@ -143,6 +143,8 @@ void Timer::Stop()
 
 void Timer::CoWait()
 {
+    if (!m_pHandle)
+        MOE_THROW(InvalidCallException, "Timer is not started");
     Coroutine::Suspend(m_stCoTickWaitHandle);
 }
 

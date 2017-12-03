@@ -15,6 +15,8 @@ namespace moe
 {
 namespace UV
 {
+    class Dns;
+
     /**
      * @brief 程序循环
      */
@@ -22,6 +24,7 @@ namespace UV
         public NonCopyable
     {
         friend class IOHandle;
+        friend class Dns;
 
     private:
         static void OnUVIdle(::uv_idle_t* handle)noexcept;

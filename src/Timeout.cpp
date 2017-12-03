@@ -144,6 +144,8 @@ void Timeout::Cancel()
 
 void Timeout::OnTick()noexcept
 {
+    if (!m_pHandle)
+        MOE_THROW(InvalidCallException, "Timer is not started");
     m_bCoTimeout = true;
     m_stCoTickWaitHandle.Resume();
 }

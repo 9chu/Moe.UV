@@ -43,3 +43,42 @@ ProcessInfo::ResourceUsage ProcessInfo::GetResourceUsage()
     ret.InvoluntaryContextSwitches = usage.ru_nivcsw;
     return ret;
 }
+
+std::string ProcessInfo::GetExePath()
+{
+    string result;
+    result.resize(256);
+    size_t size = result.length();
+
+    int ret = ::uv_exepath(&result[0], &size);
+    if (ret == UV_ENOBUFS)
+    {
+        result.resize(size);
+        MOE_UV_CHECK(::uv_exepath(&result[0], &size));
+    }
+
+    result.resize(std::strlen(result.c_str()));
+    return result;
+}
+
+std::string ProcessInfo::GetWorkingDirectory()
+{
+    string result;
+    result.resize(256);
+    size_t size = result.length();
+
+    int ret = ::uv_cwd(&result[0], &size);
+    if (ret == UV_ENOBUFS)
+    {
+        result.resize(size);
+        MOE_UV_CHECK(::uv_cwd(&result[0], &size));
+    }
+
+    result.resize(std::strlen(result.c_str()));
+    return result;
+}
+
+void ProcessInfo::SetWorkingDirectory(const char* path)
+{
+    MOE_UV_CHECK(::uv_chdir(path));
+}

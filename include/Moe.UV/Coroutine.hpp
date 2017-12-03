@@ -30,6 +30,11 @@ namespace UV
     {
     public:
         /**
+         * @brief 检查是否处于协程栈上
+         */
+        static bool InCoroutineContext()noexcept;
+
+        /**
          * @brief 主动释放当前协程的时间片并等待下一次调度时恢复运行
          *
          * 只能在协程上执行。
@@ -146,6 +151,8 @@ namespace UV
         void CollectGarbage()noexcept;
 
     private:
+        RefPtr<CoroutineController> GetRunningCoroutine()noexcept { return m_pRunningCoroutine; }
+
         void YieldCurrent();
         void SuspendCurrent(WaitHandle& handle);
 

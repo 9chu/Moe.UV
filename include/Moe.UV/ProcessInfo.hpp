@@ -49,6 +49,22 @@ namespace UV
          * @brief 获取资源用量
          */
         ResourceUsage GetResourceUsage();
+
+        /**
+         * @brief 获取当前二进制映像的路径
+         */
+        std::string GetExePath();
+
+        /**
+         * @brief 获取当前的工作目录
+         */
+        std::string GetWorkingDirectory();
+
+        /**
+         * @brief 设置工作目录
+         * @param path 工作目录
+         */
+        void SetWorkingDirectory(const char* path);
     };
 }
 }

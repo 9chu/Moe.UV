@@ -30,7 +30,15 @@ void IOHandle::OnUVCloseHandleWalker(::uv_handle_t* handle, void* arg)noexcept
 {
     MOE_UNUSED(arg);
     if (!::uv_is_closing(handle))
-        ::uv_close(handle, OnUVClose);
+    {
+        if (handle->data != nullptr)
+            ::uv_close(handle, OnUVClose);
+        else
+        {
+            assert(false);
+            ::uv_close(handle, nullptr);
+        }
+    }
 }
 
 IOHandle::IOHandle()

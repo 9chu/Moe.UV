@@ -12,6 +12,14 @@ using namespace UV;
 
 //////////////////////////////////////////////////////////////////////////////// Coroutine
 
+bool Coroutine::InCoroutineContext()noexcept
+{
+    auto scheduler = Scheduler::GetCurrent();
+    if (!scheduler)
+        return false;
+    return scheduler->GetRunningCoroutine() != nullptr;
+}
+
 void Coroutine::Yield()
 {
     auto scheduler = Scheduler::GetCurrent();
