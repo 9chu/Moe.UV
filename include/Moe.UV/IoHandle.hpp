@@ -31,8 +31,8 @@ namespace UV
      * - 该类只能继承。
      * - 一旦创建了一个实例，则对应的uv_handle_t就持有一个自身的强引用，这意味着必须Close才能释放内存。
      */
-    class IOHandle :
-        public ObjectPool::RefBase<IOHandle>
+    class IoHandle :
+        public ObjectPool::RefBase<IoHandle>
     {
         friend class RunLoop;
 
@@ -40,19 +40,18 @@ namespace UV
         template <typename T, typename P>
         static T* GetSelf(P* handle)
         {
-            return static_cast<T*>(static_cast<IOHandle*>(handle->data));
+            return static_cast<T*>(static_cast<IoHandle*>(handle->data));
         }
 
-        static ::uv_loop_t* GetCurrentLoop();
+        static ::uv_loop_t* GetCurrentUVLoop();
 
         static void OnUVClose(::uv_handle_t* handle)noexcept;
-        static void OnUVCloseHandleWalker(::uv_handle_t* handle, void* arg)noexcept;
 
     protected:
-        IOHandle();
+        IoHandle();
 
     public:
-        virtual ~IOHandle();
+        virtual ~IoHandle();
 
     public:
         /**
@@ -109,7 +108,75 @@ namespace UV
         bool m_bHandleClosed = true;
     };
 
-    using IOHandlePtr = RefPtr<IOHandle>;
+    /**
+     * @brief IO句柄持有容器
+     *
+     * 不应当使用裸的IoHandlePtr，创建IoHandle后应当使用这一容器包裹。
+     */
+    template <typename T>
+    class IoHandleHolder :
+        public NonCopyable
+    {
+    public:
+        using Pointer = RefPtr<T>;
+
+    public:
+        IoHandleHolder()noexcept = default;
+        IoHandleHolder(Pointer handle)
+            : m_pPointer(handle) {}
+        IoHandleHolder(IoHandleHolder&& rhs)noexcept
+            : m_pPointer(std::move(rhs.m_pPointer)) {}
+        ~IoHandleHolder()
+        {
+            Clear();
+        }
+
+    public:
+        operator bool()const noexcept { return static_cast<bool>(m_pPointer); }
+
+        IoHandleHolder& operator=(IoHandleHolder&& rhs)noexcept
+        {
+            m_pPointer = std::move(rhs.m_pPointer);
+            return *this;
+        }
+
+        T* operator->()noexcept
+        {
+            assert(m_pPointer);
+            return m_pPointer.GetPointer();
+        }
+
+        const T* operator->()const noexcept
+        {
+            assert(m_pPointer);
+            return m_pPointer.GetPointer();
+        }
+
+    public:
+        void Clear()
+        {
+            if (m_pPointer)
+                m_pPointer->Close();
+            m_pPointer = nullptr;
+        }
+
+        void Reset(Pointer handle)
+        {
+            if (m_pPointer)
+                m_pPointer->Close();
+            m_pPointer = handle;
+        }
+
+        Pointer Release()
+        {
+            Pointer ret;
+            ret.Swap(m_pPointer);
+            return ret;
+        }
+
+    private:
+        Pointer m_pPointer;
+    };
 }
 }
 

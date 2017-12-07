@@ -20,6 +20,14 @@ bool Coroutine::InCoroutineContext()noexcept
     return scheduler->GetRunningCoroutine() != nullptr;
 }
 
+uint32_t Coroutine::GetCoroutineId()
+{
+    auto scheduler = Scheduler::GetCurrent();
+    if (!scheduler)
+        MOE_THROW(InvalidCallException, "Bad execution context");
+    return scheduler->GetRunningCoroutineId();
+}
+
 void Coroutine::Yield()
 {
     auto scheduler = Scheduler::GetCurrent();
@@ -28,12 +36,12 @@ void Coroutine::Yield()
     scheduler->YieldCurrent();
 }
 
-void Coroutine::Suspend(WaitHandle& handle)
+ptrdiff_t Coroutine::Suspend(CoCondVar& handle)
 {
     auto scheduler = Scheduler::GetCurrent();
     if (!scheduler)
         MOE_THROW(InvalidCallException, "Bad execution context");
-    scheduler->SuspendCurrent(handle);
+    return scheduler->SuspendCurrent(handle);
 }
 
 void Coroutine::Start(std::function<void()> entry)
@@ -53,10 +61,11 @@ void Scheduler::CoroutineController::Reset(std::function<void()> entry)
     Entry = std::move(entry);
     State = CoroutineState::Created;
     ResumeType = CoroutineResumeType::Normally;
+    ResumeData = 0;
     ExceptionPtr = std::exception_ptr();
     Context = nullptr;
     StackBuffer.clear();
-    WaitHandle = nullptr;
+    CondVar = nullptr;
     WaitNext = nullptr;
 }
 
@@ -98,8 +107,9 @@ thread_local static Scheduler* t_pScheduler = nullptr;
 
 void Scheduler::CoroutineWrapper(ContextTransfer transfer)noexcept
 {
-    Scheduler* scheduler = static_cast<Scheduler*>(transfer.Data);
-    CoroutineController* self = scheduler->m_pRunningCoroutine.GetPointer();
+    auto scheduler = static_cast<Scheduler*>(transfer.Data);
+    auto self = scheduler->GetRunningCoroutine();
+    auto id = self->Id;
 
     // 更新Context
     assert(scheduler == t_pScheduler);
@@ -112,15 +122,15 @@ void Scheduler::CoroutineWrapper(ContextTransfer transfer)noexcept
     }
     catch (const moe::Exception& ex)
     {
-        MOE_ERROR("Unhandled moe::Exception: {0}", ex.ToString());
+        MOE_ERROR("[{0}] Unhandled moe::Exception: {1}", id, ex.ToString());
     }
     catch (const std::exception& ex)
     {
-        MOE_ERROR("Unhandled std::exception: {0}", ex.what());
+        MOE_ERROR("[{0}] Unhandled std::exception: {1}", id, ex.what());
     }
     catch (...)
     {
-        MOE_ERROR("Unhandled unknown exception");
+        MOE_ERROR("[{0}] Unhandled unknown exception", id);
     }
 
     self->State = CoroutineState::Terminated;
@@ -200,6 +210,9 @@ void Scheduler::Schedule()noexcept
         // 检查是否已经终止
         if (current->State == CoroutineState::Terminated)
         {
+            // 释放
+            current->Entry = nullptr;
+
             // 直接回收
             INSERT_AT_LINK_HEAD(m_pFreeHead, m_pFreeTail, current);
             ++m_uFreeCount;
@@ -207,6 +220,7 @@ void Scheduler::Schedule()noexcept
         else
         {
             // 保存协程栈
+            // TODO: 可以优化，当当前栈上的协程没有变化时无需进行memcpy
             assert(m_stSharedStack.GetStackBase() > current->Context);
             size_t stackSize = (size_t)m_stSharedStack.GetStackBase() - (size_t)current->Context;
             if (current->StackBuffer.size() < stackSize)
@@ -241,9 +255,17 @@ void Scheduler::CollectGarbage()noexcept
 {
     while (m_pFreeHead)
     {
-        REMOVE_LINK_NODE(m_pFreeHead, m_pFreeTail, m_pFreeHead);
+        auto current = m_pFreeHead;
+        REMOVE_LINK_NODE(m_pFreeHead, m_pFreeTail, current);
         --m_uFreeCount;
     }
+}
+
+uint32_t Scheduler::GetRunningCoroutineId()
+{
+    if (!m_pRunningCoroutine)
+        MOE_THROW(InvalidCallException, "No coroutine is running");
+    return m_pRunningCoroutine->Id;
 }
 
 void Scheduler::YieldCurrent()
@@ -263,7 +285,7 @@ void Scheduler::YieldCurrent()
     assert(resumeType == CoroutineResumeType::Normally);
 }
 
-void Scheduler::SuspendCurrent(WaitHandle& handle)
+ptrdiff_t Scheduler::SuspendCurrent(CoCondVar& handle)
 {
     if (!m_pRunningCoroutine)
         MOE_THROW(InvalidCallException, "No coroutine is running");
@@ -273,14 +295,15 @@ void Scheduler::SuspendCurrent(WaitHandle& handle)
     // 检查Scheduler
     if (handle.m_pScheduler == nullptr)
         handle.m_pScheduler = this;
-    assert(handle.m_pScheduler == this);
+    else if (handle.m_pScheduler != this)
+        MOE_THROW(InvalidCallException, "Bad context");
 
     // 插入到等待链表
     INSERT_AT_LINK_HEAD(m_pPendingHead, m_pPendingTail, current);
     ++m_uPendingCount;
 
-    // 加入到WaitHandle
-    current->WaitHandle = &handle;
+    // 加入到CoCondVar
+    current->CondVar = &handle;
     current->WaitNext = handle.m_pHead;
     handle.m_pHead = current;
 
@@ -301,21 +324,25 @@ void Scheduler::SuspendCurrent(WaitHandle& handle)
 
         std::rethrow_exception(exception);  // 重新抛出异常
     }
+
+    auto ret = current->ResumeData;
+    current->ResumeData = 0;
+    return ret;
 }
 
-RefPtr<Scheduler::CoroutineController> Scheduler::Alloc()
+Scheduler::CoroutineController* Scheduler::Alloc()
 {
     if (m_pFreeHead)
     {
-        auto ret = m_pFreeHead;
-
-        REMOVE_LINK_NODE(m_pFreeHead, m_pFreeTail, m_pFreeHead);
+        auto current = m_pFreeHead;
+        REMOVE_LINK_NODE(m_pFreeHead, m_pFreeTail, current);
         --m_uFreeCount;
-
-        return ret;
+        return current;
     }
 
-    return MakeRef<CoroutineController>();
+    auto p = new CoroutineController();
+    p->Id = ++m_uId;
+    return p;
 }
 
 void Scheduler::Start(std::function<void()> entry)
@@ -327,13 +354,13 @@ void Scheduler::Start(std::function<void()> entry)
     ++m_uReadyCount;
 }
 
-//////////////////////////////////////////////////////////////////////////////// WaitHandle
+//////////////////////////////////////////////////////////////////////////////// CoCondVar
 
-WaitHandle::WaitHandle()
+CoCondVar::CoCondVar()
 {
 }
 
-WaitHandle::WaitHandle(WaitHandle&& rhs)noexcept
+CoCondVar::CoCondVar(CoCondVar&& rhs)noexcept
 {
     if (rhs.m_pScheduler && rhs.m_pHead)
     {
@@ -345,21 +372,20 @@ WaitHandle::WaitHandle(WaitHandle&& rhs)noexcept
         }
 
         std::swap(m_pScheduler, rhs.m_pScheduler);
-        m_pHead.Swap(rhs.m_pHead);
+        std::swap(m_pHead, rhs.m_pHead);
 
-        // 遍历并修正WaitHandle
+        // 遍历并修正CoCondVar
         auto current = m_pHead;
         while (current)
         {
-            assert(current->WaitHandle == &rhs);
-            current->WaitHandle = this;
-
+            assert(current->CondVar == &rhs);
+            current->CondVar = this;
             current = current->WaitNext;
         }
     }
 }
 
-WaitHandle::~WaitHandle()
+CoCondVar::~CoCondVar()
 {
     if (!Empty())
     {
@@ -374,7 +400,7 @@ WaitHandle::~WaitHandle()
     }
 }
 
-WaitHandle& WaitHandle::operator=(WaitHandle&& rhs)noexcept
+CoCondVar& CoCondVar::operator=(CoCondVar&& rhs)noexcept
 {
     if (!Empty())
     {
@@ -401,15 +427,14 @@ WaitHandle& WaitHandle::operator=(WaitHandle&& rhs)noexcept
         }
 
         std::swap(m_pScheduler, rhs.m_pScheduler);
-        m_pHead.Swap(rhs.m_pHead);
+        std::swap(m_pHead, rhs.m_pHead);
 
-        // 遍历并修正WaitHandle
+        // 遍历并修正CoCondVar
         auto current = m_pHead;
         while (current)
         {
-            assert(current->WaitHandle == &rhs);
-            current->WaitHandle = this;
-
+            assert(current->CondVar == &rhs);
+            current->CondVar = this;
             current = current->WaitNext;
         }
     }
@@ -417,7 +442,7 @@ WaitHandle& WaitHandle::operator=(WaitHandle&& rhs)noexcept
     return *this;
 }
 
-void WaitHandle::Resume()noexcept
+void CoCondVar::Resume(ptrdiff_t data)noexcept
 {
     while (m_pHead)
     {
@@ -433,14 +458,15 @@ void WaitHandle::Resume()noexcept
         // 重置current的状态
         current->State = Scheduler::CoroutineState::Running;
         current->ResumeType = Scheduler::CoroutineResumeType::Normally;
-        current->WaitHandle = nullptr;
+        current->ResumeData = data;
+        current->CondVar = nullptr;
         current->WaitNext = nullptr;
     }
 
     m_pScheduler = nullptr;
 }
 
-void WaitHandle::ResumeOne()noexcept
+void CoCondVar::ResumeOne(ptrdiff_t data)noexcept
 {
     auto current = m_pHead;
     if (current)
@@ -456,7 +482,8 @@ void WaitHandle::ResumeOne()noexcept
         // 重置current的状态
         current->State = Scheduler::CoroutineState::Running;
         current->ResumeType = Scheduler::CoroutineResumeType::Normally;
-        current->WaitHandle = nullptr;
+        current->ResumeData = data;
+        current->CondVar = nullptr;
         current->WaitNext = nullptr;
 
         if (Empty())
@@ -464,7 +491,7 @@ void WaitHandle::ResumeOne()noexcept
     }
 }
 
-void WaitHandle::ResumeException(const std::exception_ptr& ptr)noexcept
+void CoCondVar::ResumeException(const std::exception_ptr& ptr)noexcept
 {
     while (m_pHead)
     {
@@ -480,8 +507,9 @@ void WaitHandle::ResumeException(const std::exception_ptr& ptr)noexcept
         // 重置current的状态
         current->State = Scheduler::CoroutineState::Running;
         current->ResumeType = Scheduler::CoroutineResumeType::Exception;
+        current->ResumeData = 0;
         current->ExceptionPtr = ptr;
-        current->WaitHandle = nullptr;
+        current->CondVar = nullptr;
         current->WaitNext = nullptr;
     }
 

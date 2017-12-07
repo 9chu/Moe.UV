@@ -19,7 +19,7 @@ namespace moe
 namespace UV
 {
     class Scheduler;
-    class WaitHandle;
+    class CoCondVar;
 
     /**
      * @brief 协程
@@ -35,6 +35,16 @@ namespace UV
         static bool InCoroutineContext()noexcept;
 
         /**
+         * @brief 获取当前协程的Id
+         * @exception InvalidCallException 不在协程上下文时抛出异常
+         * @return 协程Id
+         *
+         * 协程ID从1开始给每个协程赋值，注意到复用的协程会保持之前的ID。
+         * 理论上不会用完0xFFFFFFFF，因此可以认为是唯一的。
+         */
+        static uint32_t GetCoroutineId();
+
+        /**
          * @brief 主动释放当前协程的时间片并等待下一次调度时恢复运行
          *
          * 只能在协程上执行。
@@ -43,12 +53,13 @@ namespace UV
 
         /**
          * @brief 主动挂起协程
-         * @param handle 等待句柄
+         * @param handle 条件变量
+         * @return 返回数据
          *
          * 只能在协程上执行。
-         * 将当前协程挂起并将调度权交予WaitHandle，通过WaitHandle来使协程继续运行或者抛出异常。
+         * 挂起协程并等待一个条件变量被激活。
          */
-        static void Suspend(WaitHandle& handle);
+        static ptrdiff_t Suspend(CoCondVar& handle);
 
         /**
          * @brief 创建并启动协程
@@ -64,7 +75,7 @@ namespace UV
         public NonCopyable
     {
         friend class Coroutine;
-        friend class WaitHandle;
+        friend class CoCondVar;
 
         enum class CoroutineState
         {
@@ -81,24 +92,26 @@ namespace UV
         };
 
         struct CoroutineController :
-            public RefBase<CoroutineController>,
             public NonCopyable
         {
-            RefPtr<CoroutineController> Prev;
-            RefPtr<CoroutineController> Next;
+            uint32_t Id = 0;
+
+            CoroutineController* Prev;
+            CoroutineController* Next;
 
             std::function<void()> Entry;
             CoroutineState State = CoroutineState::Terminated;
 
             CoroutineResumeType ResumeType = CoroutineResumeType::Normally;
+            ptrdiff_t ResumeData = 0;
             std::exception_ptr ExceptionPtr;
 
             ContextState Context = nullptr;
             std::vector<uint8_t> StackBuffer;
 
             // 等待链
-            WaitHandle* WaitHandle = nullptr;
-            RefPtr<CoroutineController> WaitNext;
+            CoCondVar* CondVar = nullptr;
+            CoroutineController* WaitNext;
 
             void Reset(std::function<void()> entry);
         };
@@ -151,52 +164,55 @@ namespace UV
         void CollectGarbage()noexcept;
 
     private:
-        RefPtr<CoroutineController> GetRunningCoroutine()noexcept { return m_pRunningCoroutine; }
+        CoroutineController* GetRunningCoroutine()noexcept { return m_pRunningCoroutine; }
+        uint32_t GetRunningCoroutineId();
 
         void YieldCurrent();
-        void SuspendCurrent(WaitHandle& handle);
+        ptrdiff_t SuspendCurrent(CoCondVar& handle);
 
-        RefPtr<CoroutineController> Alloc();
+        CoroutineController* Alloc();
         void Start(std::function<void()> entry);
 
     private:
         // 就绪链表
         size_t m_uReadyCount = 0;
-        RefPtr<CoroutineController> m_pReadyHead = nullptr;
-        RefPtr<CoroutineController> m_pReadyTail = nullptr;
+        CoroutineController* m_pReadyHead = nullptr;
+        CoroutineController* m_pReadyTail = nullptr;
 
         // 等待链表
         size_t m_uPendingCount = 0;
-        RefPtr<CoroutineController> m_pPendingHead = nullptr;
-        RefPtr<CoroutineController> m_pPendingTail = nullptr;
+        CoroutineController* m_pPendingHead = nullptr;
+        CoroutineController* m_pPendingTail = nullptr;
 
         // 空闲链表
+        // 释放操作总是在空闲链表进行
+        uint32_t m_uId = 0;
         size_t m_uFreeCount = 0;
-        RefPtr<CoroutineController> m_pFreeHead = nullptr;
-        RefPtr<CoroutineController> m_pFreeTail = nullptr;
+        CoroutineController* m_pFreeHead = nullptr;
+        CoroutineController* m_pFreeTail = nullptr;
 
         // 运行状态
         GuardStack m_stSharedStack;
-        RefPtr<CoroutineController> m_pRunningCoroutine;  // 正在运行的协程
+        CoroutineController* m_pRunningCoroutine;  // 正在运行的协程
         ContextState m_pMainThreadContext = nullptr;
     };
 
     /**
-     * @brief 同步句柄
+     * @brief 协程条件变量
      *
-     * 用于协程的事件机制。
+     * 用于实现协程的等待机制。
      */
-    class WaitHandle :
+    class CoCondVar :
         public NonCopyable
     {
         friend class Scheduler;
 
     public:
-        WaitHandle();
-        WaitHandle(WaitHandle&& rhs)noexcept;
-        ~WaitHandle();
+        CoCondVar();
+        CoCondVar(CoCondVar&& rhs)noexcept;
+        ~CoCondVar();
 
-        WaitHandle& operator=(WaitHandle&& rhs)noexcept;
+        CoCondVar& operator=(CoCondVar&& rhs)noexcept;
 
     public:
         /**
@@ -206,13 +222,15 @@ namespace UV
 
         /**
          * @brief 继续执行所有协程
+         * @param data 继续执行时传递的参数
          */
-        void Resume()noexcept;
+        void Resume(ptrdiff_t data=0)noexcept;
 
         /**
          * @brief 继续执行单个协程
+         * @param data 继续执行时传递的参数
          */
-        void ResumeOne()noexcept;
+        void ResumeOne(ptrdiff_t data=0)noexcept;
 
         /**
          * @brief 以异常继续所有协程
@@ -221,7 +239,7 @@ namespace UV
 
     private:
         Scheduler* m_pScheduler = nullptr;
-        RefPtr<Scheduler::CoroutineController> m_pHead = nullptr;
+        Scheduler::CoroutineController* m_pHead = nullptr;
     };
 }
 }

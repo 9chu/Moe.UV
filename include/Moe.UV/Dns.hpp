@@ -4,7 +4,7 @@
  * @date 2017/12/2
  */
 #pragma once
-#include "IOHandle.hpp"
+#include "IoHandle.hpp"
 #include "EndPoint.hpp"
 
 #include <vector>
@@ -21,6 +21,9 @@ namespace UV
     public:
         /**
          * @brief （协程）解析地址
+         * @exception InvalidCallException 调用无效时抛出
+         * @exception OperationCancelledException 调用被取消时抛出
+         * @exception APIException API错误时抛出
          * @param[out] out 输出地址，此处复用EndPoint结构，其中端口总是为0
          * @param hostname 待解析主机名
          *
@@ -31,6 +34,9 @@ namespace UV
 
         /**
          * @brief （协程）反向解析地址
+         * @exception InvalidCallException 调用无效时抛出
+         * @exception OperationCancelledException 调用被取消时抛出
+         * @exception APIException API错误时抛出
          * @param ip 待解析IP，此处复用EndPoint结构，忽略端口
          * @param[out] hostname 地址
          *
@@ -41,6 +47,9 @@ namespace UV
 
         /**
          * @brief （协程）反向解析地址
+         * @exception InvalidCallException 调用无效时抛出
+         * @exception OperationCancelledException 调用被取消时抛出
+         * @exception APIException API错误时抛出
          * @param ip 待解析IP，此处复用EndPoint结构，忽略端口
          * @param[out] hostname 地址
          * @param[out] service 服务

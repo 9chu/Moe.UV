@@ -1,154 +1,77 @@
 /**
  * @file
  * @author chu
- * @date 2017/11/30
+ * @date 2017/12/7
  */
 #include <Moe.UV/Timer.hpp>
+#include <Moe.UV/RunLoop.hpp>
 
 using namespace std;
 using namespace moe;
 using namespace UV;
 
-namespace moe
+IoHandleHolder<Timer> Timer::Create(Time::Tick interval)
 {
-namespace UV
-{
-namespace details
-{
-    class UVTimer :
-        public IOHandle
-    {
-        static void OnUVTimer(::uv_timer_t* handle)noexcept
-        {
-            auto* self = GetSelf<UVTimer>(handle);
-            self->OnTick();
-        }
-
-    public:
-        UVTimer()
-        {
-            // 初始化libuv句柄
-            MOE_UV_CHECK(::uv_timer_init(GetCurrentLoop(), &m_stHandle));
-            BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
-        }
-
-    public:
-        Timer* GetParent() const noexcept { return m_pParent; }
-        void SetParent(Timer* parent)noexcept { m_pParent = parent; }
-
-        void Start()
-        {
-            assert(m_pParent);
-            if (IsClosing())
-                MOE_THROW(InvalidCallException, "Timer is already closed");
-            auto interval = m_pParent->GetInterval();
-            MOE_UV_CHECK(::uv_timer_start(&m_stHandle, OnUVTimer, interval, interval));
-        }
-
-        void Stop()
-        {
-            assert(m_pParent);
-            if (IsClosing())
-                MOE_THROW(InvalidCallException, "Timer is already closed");
-            MOE_UV_CHECK(::uv_timer_stop(&m_stHandle));
-        }
-
-    protected:
-        void OnTick()noexcept
-        {
-            if (!m_pParent)
-            {
-                Close();
-                return;
-            }
-            m_pParent->OnTick();
-        }
-
-    private:
-        Timer* m_pParent = nullptr;
-        ::uv_timer_t m_stHandle;
-    };
-}
-}
+    auto self = ObjectPool::Create<Timer>();
+    self->SetInterval(interval);
+    return self;
 }
 
-Timer::Timer(Timer&& rhs)noexcept
-    : m_pHandle(std::move(rhs.m_pHandle)), m_ullInterval(rhs.m_ullInterval),
-    m_stCoTickWaitHandle(std::move(rhs.m_stCoTickWaitHandle))
+void Timer::OnUVTimer(::uv_timer_t* handle)noexcept
 {
-    if (m_pHandle)
-        m_pHandle.CastTo<details::UVTimer>()->SetParent(this);
+    auto* self = GetSelf<Timer>(handle);
+    self->OnTick();
+}
+
+Timer::Timer()
+{
+    MOE_UV_CHECK(::uv_timer_init(GetCurrentUVLoop(), &m_stHandle));
+    BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
 }
 
 Timer::~Timer()
 {
-    if (m_pHandle)
-    {
-        m_pHandle->Close();
-        m_pHandle.CastTo<details::UVTimer>()->SetParent(nullptr);
-    }
+    m_stTickCondVar.Resume(static_cast<ptrdiff_t>(false));
 }
 
-Timer& Timer::operator=(Timer&& rhs)noexcept
+void Timer::Start()
 {
-    if (m_pHandle)
-    {
-        m_pHandle->Close();
-        m_pHandle.CastTo<details::UVTimer>()->SetParent(nullptr);
-    }
-
-    m_pHandle = std::move(rhs.m_pHandle);
-    m_ullInterval = rhs.m_ullInterval;
-    m_stCoTickWaitHandle = std::move(rhs.m_stCoTickWaitHandle);
-
-    if (m_pHandle)
-        m_pHandle.CastTo<details::UVTimer>()->SetParent(this);
-    return *this;
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Timer is already closed");
+    MOE_UV_CHECK(::uv_timer_start(&m_stHandle, OnUVTimer, m_ullInterval, m_ullInterval));
 }
 
-void Timer::Start(bool background)
+bool Timer::Stop()noexcept
 {
-    // 如果Timer已处于关闭状态，则移除之
-    if (m_pHandle && m_pHandle->IsClosing())
+    if (IsClosing())
+        return false;
+    auto ret = ::uv_timer_stop(&m_stHandle);
+    if (ret == 0)
     {
-        m_pHandle.CastTo<details::UVTimer>()->SetParent(nullptr);
-        m_pHandle = nullptr;
+        // 通知协程取消
+        m_stTickCondVar.Resume(static_cast<ptrdiff_t>(false));
+        return true;
     }
-
-    // 如果Timer尚未创建，则创建一个
-    if (!m_pHandle)
-    {
-        auto handle = ObjectPool::Create<details::UVTimer>();
-        handle->SetParent(this);
-
-        m_pHandle = handle.CastTo<IOHandle>();
-    }
-
-    // 通知Timer启动
-    m_pHandle.CastTo<details::UVTimer>()->Start();
-
-    // 设置是否为背景时钟
-    if (background)
-        m_pHandle->Unref();
-    else
-        m_pHandle->Ref();
+    return false;
 }
 
-void Timer::Stop()
+bool Timer::CoWait()
 {
     if (!m_pHandle)
         MOE_THROW(InvalidCallException, "Timer is not started");
-    m_pHandle.CastTo<details::UVTimer>()->Stop();
+    auto ret = Coroutine::Suspend(m_stTickCondVar);
+    return static_cast<bool>(ret);
 }
 
-void Timer::CoWait()
+void Timer::OnClose()noexcept
 {
-    if (!m_pHandle)
-        MOE_THROW(InvalidCallException, "Timer is not started");
-    Coroutine::Suspend(m_stCoTickWaitHandle);
+    IoHandle::OnClose();
+
+    // 通知协程取消
+    m_stTickCondVar.Resume(static_cast<ptrdiff_t>(false));
 }
 
 void Timer::OnTick()noexcept
 {
-    m_stCoTickWaitHandle.Resume();
+    m_stTickCondVar.Resume(static_cast<ptrdiff_t>(true));
 }

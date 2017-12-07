@@ -1,41 +1,30 @@
 /**
  * @file
  * @author chu
- * @date 2017/11/30
+ * @date 2017/12/7
  */
 #pragma once
-#include "IOHandle.hpp"
+#include "IoHandle.hpp"
 #include "Coroutine.hpp"
 
 namespace moe
 {
 namespace UV
 {
-    namespace details
-    {
-        class UVTimer;
-    }
-
-    /**
-     * @brief 时钟
-     */
     class Timer :
-        public NonCopyable
+        public IoHandle
     {
-        friend class details::UVTimer;
+        friend class ObjectPool;
 
     public:
-        /**
-         * @brief 构造时钟
-         * @param interval 时钟间隔
-         */
-        Timer(Time::Tick interval=100)noexcept
-            : m_ullInterval(interval) {}
+        static IoHandleHolder<Timer> Create(Time::Tick interval=100);
 
+    private:
+        static void OnUVTimer(::uv_timer_t* handle)noexcept;
+
+    protected:
+        Timer();
         ~Timer();
-
-        Timer(Timer&& rhs)noexcept;
-        Timer& operator=(Timer&& rhs)noexcept;
 
     public:
         /**
@@ -51,35 +40,35 @@ namespace UV
         void SetInterval(Time::Tick interval)noexcept { m_ullInterval = interval; }
 
         /**
-         * @brief 启动计时器
-         * @param background 是否为背景时钟，若设置为真，则即使时钟为活动事件主循环也不会等待。
+         * @brief 启动定时器
          */
-        void Start(bool background=false);
+        void Start();
 
         /**
-         * @brief 停止计时器
+         * @brief 终止定时器
          */
-        void Stop();
+        bool Stop()noexcept;
 
         /**
-         * @brief 协程等待计时触发
+         * @brief （协程）等待计时触发
+         * @return 是否主动取消
          *
          * 该方法只能在协程上执行。
          */
-        void CoWait();
+        bool CoWait();
 
-    protected:  // 内部事件
+    protected:
+        void OnClose()noexcept override;
         void OnTick()noexcept;
 
     private:
-        // 句柄
-        IOHandlePtr m_pHandle;
+        ::uv_timer_t m_stHandle;
 
         // 属性
         Time::Tick m_ullInterval = 100;
 
-        // 协程事件
-        WaitHandle m_stCoTickWaitHandle;
+        // 协程
+        CoCondVar m_stTickCondVar;
     };
 }
 }

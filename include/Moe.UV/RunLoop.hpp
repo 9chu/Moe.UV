@@ -6,7 +6,8 @@
 #pragma once
 #include "ObjectPool.hpp"
 #include "Coroutine.hpp"
-#include "IOHandle.hpp"
+#include "IoHandle.hpp"
+#include "IdleHandle.hpp"
 
 #include <Moe.Core/Time.hpp>
 #include <Moe.Core/Utils.hpp>
@@ -23,11 +24,8 @@ namespace UV
     class RunLoop :
         public NonCopyable
     {
-        friend class IOHandle;
+        friend class IoHandle;
         friend class Dns;
-
-    private:
-        static void OnUVIdle(::uv_idle_t* handle)noexcept;
 
     public:
         /**
@@ -43,6 +41,12 @@ namespace UV
          */
         static Time::Tick Now()noexcept;
 
+    protected:
+        static ::uv_loop_t* GetCurrentUVLoop();
+
+    private:
+        static void UVClosingHandleWalker(::uv_handle_t* handle, void* arg)noexcept;
+
     public:
         /**
          * @brief 构造消息循环
@@ -56,6 +60,11 @@ namespace UV
         RunLoop& operator=(RunLoop&&) = delete;
 
     public:
+        /**
+         * @brief 是否处于关闭状态
+         */
+        bool IsClosing()const noexcept { return m_bClosing; }
+
         /**
          * @brief 启动程序循环
          *
@@ -75,14 +84,17 @@ namespace UV
          */
         void UpdateTime()noexcept;
 
-    protected:  // 内部事件
-        void OnIdle()noexcept;
+    protected:
+        void OnIdle();
 
     private:
         ObjectPool m_stObjectPool;
         Scheduler m_stScheduler;
+
+        bool m_bClosing = false;
         ::uv_loop_t m_stLoop;
-        ::uv_idle_t m_stIdle;
+
+        IoHandleHolder<IdleHandle> m_stIdleHandle;
     };
 }
 }
