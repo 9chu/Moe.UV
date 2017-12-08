@@ -12,7 +12,7 @@ using namespace UV;
 
 IoHandleHolder<Timer> Timer::Create(Time::Tick interval)
 {
-    auto self = ObjectPool::Create<Timer>();
+    auto self = IoHandleHolder<Timer>(ObjectPool::Create<Timer>());
     self->SetInterval(interval);
     return self;
 }

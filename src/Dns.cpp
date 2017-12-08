@@ -27,8 +27,6 @@ namespace
             {
                 try
                 {
-                    if (status == UV_ECANCELED)
-                        MOE_THROW(OperationCancelledException, "Dns resolve is cancelled");
                     MOE_UV_THROW(status);
                 }
                 catch (...)
@@ -105,8 +103,6 @@ namespace
             {
                 try
                 {
-                    if (status == UV_ECANCELED)
-                        MOE_THROW(OperationCancelledException, "Dns resolve is cancelled");
                     MOE_UV_THROW(status);
                 }
                 catch (...)

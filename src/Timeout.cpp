@@ -12,7 +12,7 @@ using namespace UV;
 
 IoHandleHolder<Timeout> Timeout::Create()
 {
-    auto self = ObjectPool::Create<Timeout>();
+    auto self = IoHandleHolder<Timeout>(ObjectPool::Create<Timeout>());
     return self;
 }
 

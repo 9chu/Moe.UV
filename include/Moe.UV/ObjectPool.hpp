@@ -58,6 +58,8 @@ namespace UV
         template <typename T>
         using RefBase = moe::RefBase<T, details::ObjectPoolDeleter<T>>;
 
+        static const size_t kMaxAllocSize = FixedBufferPool::kMaxAllocSize;
+
     public:
         /**
          * @brief 获取当前线程上的ObjectPool实例

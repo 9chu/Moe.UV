@@ -122,15 +122,15 @@ void Scheduler::CoroutineWrapper(ContextTransfer transfer)noexcept
     }
     catch (const moe::Exception& ex)
     {
-        MOE_ERROR("[{0}] Unhandled moe::Exception: {1}", id, ex.ToString());
+        MOE_ERROR("[co-{0}] Unhandled moe::Exception: {1}", id, ex.ToString());
     }
     catch (const std::exception& ex)
     {
-        MOE_ERROR("[{0}] Unhandled std::exception: {1}", id, ex.what());
+        MOE_ERROR("[co-{0}] Unhandled std::exception: {1}", id, ex.what());
     }
     catch (...)
     {
-        MOE_ERROR("[{0}] Unhandled unknown exception", id);
+        MOE_ERROR("[co-{0}] Unhandled unknown exception", id);
     }
 
     self->State = CoroutineState::Terminated;

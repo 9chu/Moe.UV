@@ -182,6 +182,8 @@ namespace UV
 
 #define MOE_UV_THROW(status) \
     do { \
+        if (status == UV_ECANCELED) \
+            MOE_THROW(OperationCancelledException, "Operation is cancelled"); \
         moe::APIException ex; \
         const char* err = ::uv_strerror((status)); \
         ex.SetSourceFile(__FILE__); \
