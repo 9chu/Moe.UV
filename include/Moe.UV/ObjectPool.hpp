@@ -50,7 +50,7 @@ namespace UV
         public NonCopyable
     {
         template <typename T>
-        friend class details::ObjectPoolDeleter;
+        friend struct details::ObjectPoolDeleter;
 
     public:
         using BufferPtr = std::unique_ptr<void, details::ObjectPoolDeleter<void>>;

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cerrno>
 
 using namespace std;
 using namespace moe;
@@ -45,8 +46,9 @@ size_t GuardStack::GetDefaultStackSize()noexcept
 }
 
 #elif (defined(__unix__) || defined(__unix) || (defined(__APPLE__) && defined(__MACH__)))
+#include <csignal>
 #include <unistd.h>
-#include <signal.h>
+#include <sys/mman.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -147,7 +149,7 @@ void GuardStack::Alloc(size_t stackSize)
 #ifdef MAP_ANON
     auto memory = ::mmap(0, fullSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 #else
-    auto memory = ::mmap(0, size_, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    auto memory = ::mmap(0, fullSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #endif
 
     if (memory == MAP_FAILED)

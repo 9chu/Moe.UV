@@ -37,7 +37,7 @@ namespace
         }
     }
 
-    void InetNtop6(const in_addr6* addr, char* dst, size_t size)
+    void InetNtop6(const in6_addr* addr, char* dst, size_t size)
     {
         const uint8_t* src = reinterpret_cast<const uint8_t*>(addr);
         char buffer[kMaxIpv6AddressLen], *tp;
@@ -125,9 +125,9 @@ EndPoint EndPoint::FromIpv4(uint32_t addr, uint16_t port)noexcept
     zero.sin_family = AF_INET;
     zero.sin_port = htons(port);
 #ifdef MOE_WINDOWS
-    zero.sin_addr.S_un.S_addr = ::htonl(addr);
+    zero.sin_addr.S_un.S_addr = htonl(addr);
 #else
-    zero.sin_addr.s_addr = ::htonl(addr);
+    zero.sin_addr.s_addr = htonl(addr);
 #endif
 
     return EndPoint(zero);
@@ -141,11 +141,11 @@ EndPoint EndPoint::FromIpv4(const Ipv4Address& addr, uint16_t port)noexcept
     ::sockaddr_in zero;
     ::memset(&zero, 0, sizeof(zero));
     zero.sin_family = AF_INET;
-    zero.sin_port = ::htons(port);
+    zero.sin_port = htons(port);
 #ifdef MOE_WINDOWS
-    zero.sin_addr.S_un.S_addr = ::htonl(caddr);
+    zero.sin_addr.S_un.S_addr = htonl(caddr);
 #else
-    zero.sin_addr.s_addr = ::htonl(caddr);
+    zero.sin_addr.s_addr = htonl(caddr);
 #endif
 
     return EndPoint(zero);
@@ -156,7 +156,7 @@ EndPoint EndPoint::FromIpv4(const char* addr, uint16_t port)
     ::sockaddr_in zero;
     ::memset(&zero, 0, sizeof(zero));
     zero.sin_family = AF_INET;
-    zero.sin_port = ::htons(port);
+    zero.sin_port = htons(port);
 
     char ch = '\0';
     int octets = 0;
@@ -207,9 +207,9 @@ EndPoint::EndPoint()noexcept
     zero.sin_family = AF_INET;
     zero.sin_port = 0;
 #ifdef MOE_WINDOWS
-    zero.sin_addr.S_un.S_addr = ::htonl(INADDR_ANY);
+    zero.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
 #else
-    zero.sin_addr.s_addr = ::htonl(INADDR_ANY);
+    zero.sin_addr.s_addr = htonl(INADDR_ANY);
 #endif
 
     ::memcpy(&Storage, &zero, sizeof(zero));
