@@ -7,7 +7,8 @@
 #include "ObjectPool.hpp"
 #include "Coroutine.hpp"
 #include "IoHandle.hpp"
-#include "IdleHandle.hpp"
+#include "PrepareHandle.hpp"
+#include "CheckHandle.hpp"
 
 #include <Moe.Core/Time.hpp>
 #include <Moe.Core/Utils.hpp>
@@ -85,7 +86,8 @@ namespace UV
         void UpdateTime()noexcept;
 
     protected:
-        void OnIdle();
+        void OnPrepare();
+        void OnCheck();
 
     private:
         ObjectPool m_stObjectPool;
@@ -94,7 +96,8 @@ namespace UV
         bool m_bClosing = false;
         ::uv_loop_t m_stLoop;
 
-        IoHandleHolder<IdleHandle> m_stIdleHandle;
+        IoHandleHolder<PrepareHandle> m_stPrepareHandle;
+        IoHandleHolder<CheckHandle> m_stCheckHandle;
     };
 }
 }

@@ -44,9 +44,8 @@ void UdpSocket::OnUVSend(::uv_udp_send_t* request, int status)noexcept
 
     if (status != 0)
     {
-        // 发生错误，报告错误后直接关闭连接
+        // 通知错误发生
         self->OnError(status);
-        self->Close();
 
         // 触发一个异常给Coroutine
         try
@@ -60,6 +59,7 @@ void UdpSocket::OnUVSend(::uv_udp_send_t* request, int status)noexcept
     }
     else
     {
+        // 通知数据发送
         self->OnSend(holder->BufferDesc.len);
 
         // 恢复Coroutine
@@ -74,12 +74,14 @@ void UdpSocket::OnUVDirectSend(::uv_udp_send_t* request, int status)noexcept
 
     if (status != 0)
     {
-        // 发生错误，报告错误后直接关闭连接
+        // 通知错误发生
         self->OnError(status);
-        self->Close();
     }
     else
+    {
+        // 通知数据发送
         self->OnSend(holder->BufferDesc.len);
+    }
 }
 
 void UdpSocket::OnUVAllocBuffer(::uv_handle_t* handle, size_t suggestedSize, ::uv_buf_t* buf)noexcept
@@ -103,7 +105,31 @@ void UdpSocket::OnUVAllocBuffer(::uv_handle_t* handle, size_t suggestedSize, ::u
 void UdpSocket::OnUVRecv(::uv_udp_t* udp, ssize_t nread, const ::uv_buf_t* buf, const ::sockaddr* addr,
     unsigned flags)noexcept
 {
+    auto* self = GetSelf<UdpSocket>(udp);
+    ObjectPool::BufferPtr buffer(buf->base);  // 获取所有权，确保调用后对象释放
 
+    if (nread < 0)
+    {
+        // 通知错误发生
+        self->OnError(static_cast<int>(nread));
+    }
+    else if (nread > 0)
+    {
+        if (flags == UV_UDP_PARTIAL || !(addr->sa_family == AF_INET || addr->sa_family == AF_INET6))
+            return;  // 不能处理的数据包类型，直接丢包
+
+        EndPoint remote;
+        if (addr->sa_family == AF_INET)
+            remote = EndPoint(*reinterpret_cast<const ::sockaddr_in*>(addr));
+        else
+        {
+            assert(addr->sa_family == AF_INET6);
+            remote = EndPoint(*reinterpret_cast<const ::sockaddr_in6*>(addr));
+        }
+
+        // 通知数据读取
+        self->OnRead(remote, std::move(buffer), static_cast<size_t>(nread));
+    }
 }
 
 UdpSocket::UdpSocket()
@@ -168,7 +194,8 @@ void UdpSocket::Send(const EndPoint& address, BytesView buffer)
         reinterpret_cast<const ::sockaddr*>(&address.Storage), OnUVDirectSend));
 
     // 释放所有权，交由UV管理
-    request->Request.data = request.Release();
+    ::uv_udp_send_t& req = request->Request;
+    req.data = request.Release();
 }
 
 void UdpSocket::CoSend(const EndPoint& address, BytesView buffer)
@@ -198,7 +225,7 @@ void UdpSocket::CoSend(const EndPoint& address, BytesView buffer)
     Coroutine::Suspend(request->CondVar);
 }
 
-bool UdpSocket::CoRead(ObjectPool::BufferPtr& buffer, size_t& size)
+bool UdpSocket::CoRead(EndPoint& remote, ObjectPool::BufferPtr& buffer, size_t& size)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
@@ -215,8 +242,9 @@ bool UdpSocket::CoRead(ObjectPool::BufferPtr& buffer, size_t& size)
     {
         // 如果有，则直接返回
         auto q = m_stQueuedBuffer.Pop();
-        buffer = std::move(q.first);
-        size = q.second;
+        remote = q.Remote;
+        buffer = std::move(q.Buffer);
+        size = q.Length;
         return true;
     }
 
@@ -227,8 +255,9 @@ bool UdpSocket::CoRead(ObjectPool::BufferPtr& buffer, size_t& size)
         // 此时缓冲区必然有数据
         assert(!m_stQueuedBuffer.IsEmpty());
         auto q = m_stQueuedBuffer.Pop();
-        buffer = std::move(q.first);
-        size = q.second;
+        remote = q.Remote;
+        buffer = std::move(q.Buffer);
+        size = q.Length;
         return true;
     }
     return false;
@@ -239,29 +268,74 @@ bool UdpSocket::CancelRead()noexcept
     if (IsClosing())
         return false;
     auto ret = ::uv_udp_recv_stop(&m_stHandle);
-    return ret == 0;
+    if (ret == 0)
+    {
+        // 清空未读数据
+        m_stQueuedBuffer.Clear();
+
+        // 通知句柄退出
+        m_stReadCondVar.Resume(static_cast<ptrdiff_t>(false));
+
+        m_bReading = false;
+        return true;
+    }
+    return false;
 }
 
 void UdpSocket::OnClose()noexcept
 {
     IoHandle::Close();
+    m_bReading = false;
 }
 
 void UdpSocket::OnError(int error)noexcept
 {
+    // 记录错误日志
+    MOE_UV_LOG_ERROR(error);
 
+    // 关闭连接
+    Close();
+
+    // 终止读句柄
+    try
+    {
+        MOE_UV_THROW(error);
+    }
+    catch (...)
+    {
+        m_stReadCondVar.ResumeException(current_exception());
+    }
 }
 
 void UdpSocket::OnSend(size_t len)noexcept
 {
+    // TODO: 数据统计
+    MOE_UNUSED(len);
 }
 
-void UdpSocket::OnRead(ObjectPool::BufferPtr buffer, size_t len)noexcept
+void UdpSocket::OnRead(const EndPoint& remote, ObjectPool::BufferPtr buffer, size_t len)noexcept
 {
+    QueueData data;
+    data.Remote = remote;
+    data.Buffer = std::move(buffer);
+    data.Length = len;
 
-}
+    bool ret = m_stQueuedBuffer.TryPush(std::move(data));
+    MOE_UNUSED(ret);
+    assert(ret);
 
-void UdpSocket::OnReadStopped()noexcept
-{
+    // 数据已满，停止读操作
+    if (m_stQueuedBuffer.IsFull())
+    {
+        if (m_bReading)
+        {
+            auto error = ::uv_udp_recv_stop(&m_stHandle);
+            MOE_UNUSED(error);
+            assert(error == 0);
+            m_bReading = false;
+        }
+    }
 
+    // 激活协程
+    m_stReadCondVar.ResumeOne(static_cast<ptrdiff_t>(true));
 }

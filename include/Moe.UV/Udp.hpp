@@ -27,6 +27,13 @@ namespace UV
         static IoHandleHolder<UdpSocket> Create(const EndPoint& bind, bool reuse=true, bool ipv6Only=false);
 
     private:
+        struct QueueData
+        {
+            EndPoint Remote;
+            ObjectPool::BufferPtr Buffer;
+            size_t Length;
+        };
+
         static void OnUVSend(::uv_udp_send_t* request, int status)noexcept;
         static void OnUVDirectSend(::uv_udp_send_t* request, int status)noexcept;
         static void OnUVAllocBuffer(::uv_handle_t* handle, size_t suggestedSize, ::uv_buf_t* buf)noexcept;
@@ -82,13 +89,14 @@ namespace UV
 
         /**
          * @brief （协程）接收数据包
-         * @param buffer 数据缓冲区
-         * @param size 数据大小
+         * @param[out] remote 远端地址
+         * @param[out] buffer 数据缓冲区
+         * @param[out] size 数据大小
          * @return 是否收到数据，若为false表示操作被取消
          *
          * 如果尚未绑定端口，则会绑定到0.0.0.0和随机端口上。
          */
-        bool CoRead(ObjectPool::BufferPtr& buffer, size_t& size);
+        bool CoRead(EndPoint& remote, ObjectPool::BufferPtr& buffer, size_t& size);
 
         /**
          * @brief 立即终止读操作
@@ -97,16 +105,15 @@ namespace UV
 
     protected:
         void OnClose()noexcept override;
-        void OnError(int error)noexcept;
+        void OnError(int status)noexcept;
         void OnSend(size_t len)noexcept;
-        void OnRead(ObjectPool::BufferPtr buffer, size_t len)noexcept;
-        void OnReadStopped()noexcept;
+        void OnRead(const EndPoint& remote, ObjectPool::BufferPtr buffer, size_t len)noexcept;
 
     private:
         ::uv_udp_t m_stHandle;
 
         bool m_bReading = false;
-        CircularQueue<std::pair<ObjectPool::BufferPtr, size_t>, 8> m_stQueuedBuffer;  // 缓存的缓冲区
+        CircularQueue<QueueData, 8> m_stQueuedBuffer;  // 缓存的缓冲区
 
         // 协程
         CoCondVar m_stReadCondVar;  // 等待读的协程

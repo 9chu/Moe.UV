@@ -63,11 +63,19 @@ RunLoop::RunLoop(size_t coroutineSharedStackSize)
     // 创建Idle句柄
     try
     {
-        m_stIdleHandle = IdleHandle::Create(std::bind(&RunLoop::OnIdle, this));
-        m_stIdleHandle->Unref();  // 后台对象
+        m_stPrepareHandle = PrepareHandle::Create(std::bind(&RunLoop::OnPrepare, this));
+        m_stCheckHandle = CheckHandle::Create(std::bind(&RunLoop::OnCheck, this));
+
+        // 后台对象
+        m_stPrepareHandle->Unref();
+        m_stCheckHandle->Unref();
     }
     catch (...)
     {
+        // 删除句柄
+        m_stPrepareHandle.Clear();
+        m_stCheckHandle.Clear();
+
         t_pRunLoop = nullptr;
 
         MOE_UV_CHECK(::uv_loop_close(&m_stLoop));
@@ -79,8 +87,9 @@ RunLoop::~RunLoop()
 {
     m_bClosing = true;
 
-    // 关闭Idle句柄
-    m_stIdleHandle.Clear();
+    // 删除句柄
+    m_stPrepareHandle.Clear();
+    m_stCheckHandle.Clear();
 
     // 等待所有句柄和请求结束
     while (::uv_loop_alive(&m_stLoop) != 0 || !m_stScheduler.IsIdle())
@@ -106,14 +115,16 @@ void RunLoop::Run()
     // 先执行一次协程调度，防止在uv_run之前对象还没创建出来就退出了循环
     m_stScheduler.Schedule();
 
-    // 启动Idle句柄
-    m_stIdleHandle->Start();
+    // 启动句柄
+    m_stPrepareHandle->Start();
+    m_stCheckHandle->Start();
 
     // 开始程序循环
     ::uv_run(&m_stLoop, UV_RUN_DEFAULT);
 
-    // 终止Idle句柄
-    m_stIdleHandle->Stop();
+    // 终止句柄
+    m_stPrepareHandle->Stop();
+    m_stCheckHandle->Stop();
 }
 
 void RunLoop::Stop()noexcept
@@ -126,7 +137,16 @@ void RunLoop::UpdateTime()noexcept
     ::uv_update_time(&m_stLoop);
 }
 
-void RunLoop::OnIdle()
+void RunLoop::OnPrepare()
 {
+    // 计时器调度发生在OnPrepare之前
+    // 因此在这里执行由计时器调度触发的协程
+    m_stScheduler.Schedule();
+}
+
+void RunLoop::OnCheck()
+{
+    // 句柄处理完成后执行OnCheck
+    // 因此在这里执行由句柄事件调度触发的协程
     m_stScheduler.Schedule();
 }

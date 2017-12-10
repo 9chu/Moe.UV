@@ -223,27 +223,26 @@ void Scheduler::Schedule()noexcept
             // TODO: 可以优化，当当前栈上的协程没有变化时无需进行memcpy
             assert(m_stSharedStack.GetStackBase() > current->Context);
             size_t stackSize = (size_t)m_stSharedStack.GetStackBase() - (size_t)current->Context;
-            if (current->StackBuffer.size() < stackSize)
+
+            try
             {
+                current->StackBuffer.resize(stackSize);
+            }
+            catch (...)
+            {
+                CollectGarbage();  // 尝试进行一次GC
+
                 try
                 {
                     current->StackBuffer.resize(stackSize);
                 }
                 catch (...)
                 {
-                    CollectGarbage();  // 尝试进行一次GC
-
-                    try
-                    {
-                        current->StackBuffer.resize(stackSize);
-                    }
-                    catch (...)
-                    {
-                        MOE_FATAL("Allocate stack memory failed, size={0}", stackSize);
-                        ::abort();  // 无法恢复，直接失败退出程序
-                    }
+                    MOE_FATAL("Allocate stack memory failed, size={0}", stackSize);
+                    ::abort();  // 无法恢复，直接失败退出程序
                 }
             }
+
             ::memcpy(current->StackBuffer.data(), current->Context, stackSize);
         }
 
@@ -282,6 +281,7 @@ void Scheduler::YieldCurrent()
     m_pMainThreadContext = transfer.State;
 
     auto resumeType = static_cast<CoroutineResumeType>(reinterpret_cast<ptrdiff_t>(transfer.Data));
+    MOE_UNUSED(resumeType);
     assert(resumeType == CoroutineResumeType::Normally);
 }
 
