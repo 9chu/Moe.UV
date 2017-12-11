@@ -138,7 +138,7 @@ UdpSocket::UdpSocket()
     BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
 }
 
-EndPoint UdpSocket::GetLocalEndpoint()const noexcept
+EndPoint UdpSocket::GetLocalEndPoint()const noexcept
 {
     EndPoint ret;
 
@@ -152,6 +152,14 @@ EndPoint UdpSocket::GetLocalEndpoint()const noexcept
     return ret;
 }
 
+void UdpSocket::SetTTL(int ttl)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+
+    MOE_UV_CHECK(::uv_udp_set_ttl(&m_stHandle, ttl));
+}
+
 void UdpSocket::Bind(const EndPoint& address, bool reuse, bool ipv6Only)
 {
     if (IsClosing())
@@ -161,14 +169,6 @@ void UdpSocket::Bind(const EndPoint& address, bool reuse, bool ipv6Only)
     flags |= (reuse ? UV_UDP_REUSEADDR : 0);
     flags |= (ipv6Only ? UV_UDP_IPV6ONLY : 0);
     MOE_UV_CHECK(::uv_udp_bind(&m_stHandle, reinterpret_cast<const sockaddr*>(&address.Storage), flags));
-}
-
-void UdpSocket::SetTTL(int ttl)
-{
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
-
-    MOE_UV_CHECK(::uv_udp_set_ttl(&m_stHandle, ttl));
 }
 
 void UdpSocket::Send(const EndPoint& address, BytesView buffer)
