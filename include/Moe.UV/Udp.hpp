@@ -100,6 +100,9 @@ namespace UV
 
         /**
          * @brief 立即终止读操作
+         *
+         * 立即终止读操作，激活所有协程并且抛弃缓冲的数据包。
+         * 如果使用Close而不是CancelRead将会引发OperationCancelledException。
          */
         bool CancelRead()noexcept;
 

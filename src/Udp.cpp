@@ -202,8 +202,6 @@ void UdpSocket::CoSend(const EndPoint& address, BytesView buffer)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
-    if (buffer.GetSize() > ObjectPool::kMaxAllocSize)
-        MOE_THROW(InvalidCallException, "Buffer is too big");
     if (buffer.GetSize() == 0)
         return;
 

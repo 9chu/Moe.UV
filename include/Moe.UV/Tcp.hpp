@@ -4,8 +4,11 @@
  * @date 2017/12/11
  */
 #pragma once
+#include <Moe.Core/CircularQueue.hpp>
+
 #include "IoHandle.hpp"
 #include "EndPoint.hpp"
+#include "Coroutine.hpp"
 
 namespace moe
 {
@@ -28,6 +31,11 @@ namespace UV
             ObjectPool::BufferPtr Buffer;
             size_t Length;
         };
+
+        static void OnUVConnect(::uv_connect_t* req, int status)noexcept;
+        static void OnUVShutdown(::uv_shutdown_t* req, int status)noexcept;
+        static void OnUVWrite(::uv_write_t* req, int status)noexcept;
+        static void OnUVDirectWrite(::uv_write_t* req, int status)noexcept;
 
     protected:
         TcpSocket();
@@ -111,12 +119,27 @@ namespace UV
          * @param[out] size 数据大小
          * @return 是否收到数据，若为false表示操作被取消
          *
+         * 该方法用于异步接收任意长度数据包，一旦有数据可读即触发。亦写作ReadSome。
          * 当读取到EOF也会产生false表明操作被取消。
          */
         bool CoRead(ObjectPool::BufferPtr& buffer, size_t& size);
 
         /**
+         * @brief （协程）读取若干字节
+         * @param target 目标缓冲区
+         * @param count 数量
+         * @return 是否收到数据，若为false表示操作被取消
+         *
+         * 该方法会阻塞协程，直到读取到count个字节的数据。
+         * 当读取到EOF也会产生false表明操作被取消。
+         */
+        bool CoRead(uint8_t* target, size_t count);
+
+        /**
          * @brief 立即终止读操作
+         *
+         * 立即终止读操作，并激活所有协程。
+         * 如果使用Close而不是CancelRead将会引发OperationCancelledException。
          */
         bool CancelRead()noexcept;
 
@@ -124,10 +147,16 @@ namespace UV
         void OnClose()noexcept override;
         void OnError(int status)noexcept;
         void OnSend(size_t len)noexcept;
-        void OnRead(const EndPoint& remote, ObjectPool::BufferPtr buffer, size_t len)noexcept;
+        void OnRead(ObjectPool::BufferPtr buffer, size_t len)noexcept;
 
     private:
         ::uv_tcp_t m_stHandle;
+
+        bool m_bReading = false;
+        CircularQueue<QueueData, 8> m_stQueuedBuffer;  // 缓存的缓冲区
+
+        // 协程
+        CoCondVar m_stReadCondVar;  // 等待读的协程
     };
 }
 }
