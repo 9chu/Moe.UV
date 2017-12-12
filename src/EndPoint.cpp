@@ -323,6 +323,21 @@ const uint8_t* EndPoint::GetAddressIpv6()const
 #endif
 }
 
+EndPoint& EndPoint::SetPort(uint16_t port)noexcept
+{
+    if (Storage.ss_family == AF_INET)
+    {
+        ::sockaddr_in* real = reinterpret_cast<::sockaddr_in*>(&Storage);
+        real->sin_port = htons(port);
+    }
+    else
+    {
+        ::sockaddr_in6* real = reinterpret_cast<::sockaddr_in6*>(&Storage);
+        real->sin6_port = htons(port);
+    }
+    return *this;
+}
+
 std::string EndPoint::ToString()const
 {
     if (Storage.ss_family == AF_INET6)

@@ -129,6 +129,28 @@ namespace
     };
 }
 
+EndPoint Dns::CoResolve(const char* hostname)
+{
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVGetAddrInfoReq>();
+    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &req->Request, UVGetAddrInfoReq::Callback, hostname,
+        nullptr, nullptr));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVGetAddrInfoReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    if (req->Result.size() > 0)
+        return req->Result[0];
+
+    MOE_THROW(ObjectNotFoundException, "Can't resolve domain \"{0}\"", hostname);
+}
+
 void Dns::CoResolve(std::vector<EndPoint>& out, const char* hostname)
 {
     if (!Coroutine::InCoroutineContext())

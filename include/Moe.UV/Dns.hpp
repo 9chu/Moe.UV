@@ -24,6 +24,20 @@ namespace UV
          * @exception InvalidCallException 调用无效时抛出
          * @exception OperationCancelledException 调用被取消时抛出
          * @exception APIException API错误时抛出
+         * @param hostname 待解析主机名
+         * @return 解析结果
+         *
+         * 只能被协程调用。
+         * 必须有RunLoop才能调用。
+         * 方法选取首个解析的地址。
+         */
+        static EndPoint CoResolve(const char* hostname);
+
+        /**
+         * @brief （协程）解析地址
+         * @exception InvalidCallException 调用无效时抛出
+         * @exception OperationCancelledException 调用被取消时抛出
+         * @exception APIException API错误时抛出
          * @param[out] out 输出地址，此处复用EndPoint结构，其中端口总是为0
          * @param hostname 待解析主机名
          *

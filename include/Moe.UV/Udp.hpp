@@ -108,7 +108,7 @@ namespace UV
 
     protected:
         void OnClose()noexcept override;
-        void OnError(int status)noexcept;
+        void OnError(int error)noexcept;
         void OnSend(size_t len)noexcept;
         void OnRead(const EndPoint& remote, ObjectPool::BufferPtr buffer, size_t len)noexcept;
 

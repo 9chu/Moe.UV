@@ -28,14 +28,16 @@ namespace UV
     private:
         struct QueueData
         {
-            ObjectPool::BufferPtr Buffer;
-            size_t Length;
+            ObjectPool::BufferPtr Holder;
+            MutableBytesView View;
         };
 
         static void OnUVConnect(::uv_connect_t* req, int status)noexcept;
         static void OnUVShutdown(::uv_shutdown_t* req, int status)noexcept;
         static void OnUVWrite(::uv_write_t* req, int status)noexcept;
         static void OnUVDirectWrite(::uv_write_t* req, int status)noexcept;
+        static void OnUVAllocBuffer(::uv_handle_t* handle, size_t suggestedSize, ::uv_buf_t* buf)noexcept;
+        static void OnUVRead(::uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)noexcept;
 
     protected:
         TcpSocket();
@@ -115,19 +117,20 @@ namespace UV
 
         /**
          * @brief （协程）接收数据包
-         * @param[out] buffer 数据缓冲区
-         * @param[out] size 数据大小
+         * @param[out] holder 数据缓冲区对象
+         * @param[out] view 缓冲区
          * @return 是否收到数据，若为false表示操作被取消
          *
          * 该方法用于异步接收任意长度数据包，一旦有数据可读即触发。亦写作ReadSome。
+         * 该方法将直接传出内部缓冲区和有效的读取区段，当holder被释放时内部缓冲区才会交还内存池。
          * 当读取到EOF也会产生false表明操作被取消。
          */
-        bool CoRead(ObjectPool::BufferPtr& buffer, size_t& size);
+        bool CoRead(ObjectPool::BufferPtr& holder, MutableBytesView& view);
 
         /**
          * @brief （协程）读取若干字节
-         * @param target 目标缓冲区
-         * @param count 数量
+         * @param[inout] target 目标缓冲区
+         * @param[out] count 数量
          * @return 是否收到数据，若为false表示操作被取消
          *
          * 该方法会阻塞协程，直到读取到count个字节的数据。
@@ -145,9 +148,10 @@ namespace UV
 
     protected:
         void OnClose()noexcept override;
-        void OnError(int status)noexcept;
+        void OnError(int error)noexcept;
         void OnSend(size_t len)noexcept;
         void OnRead(ObjectPool::BufferPtr buffer, size_t len)noexcept;
+        void OnEof()noexcept;
 
     private:
         ::uv_tcp_t m_stHandle;

@@ -23,6 +23,9 @@
 #ifdef min
 #undef min
 #endif
+#ifdef SetPort
+#undef SetPort
+#endif
 
 #else
 
@@ -70,6 +73,8 @@ namespace UV
         std::string GetAddress()const;
         uint32_t GetAddressIpv4()const;
         const uint8_t* GetAddressIpv6()const;  // return uint8_t[16]
+
+        EndPoint& SetPort(uint16_t port)noexcept;
 
         std::string ToString()const;
 
