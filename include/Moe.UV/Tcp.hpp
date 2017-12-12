@@ -14,6 +14,8 @@ namespace moe
 {
 namespace UV
 {
+    class TcpListener;
+
     /**
      * @brief TCP套接字
      */
@@ -21,6 +23,7 @@ namespace UV
         public IoHandle
     {
         friend class ObjectPool;
+        friend class TcpListener;
 
     public:
         static IoHandleHolder<TcpSocket> Create();
@@ -72,10 +75,9 @@ namespace UV
         /**
          * @brief 绑定套接字
          * @param address 绑定地址
-         * @param reuse 是否复用
          * @param ipv6Only 是否仅IPV6地址
          */
-        void Bind(const EndPoint& address, bool reuse=true, bool ipv6Only=false);
+        void Bind(const EndPoint& address, bool ipv6Only=false);
 
         /**
          * @brief （协程）连接地址
@@ -161,6 +163,63 @@ namespace UV
 
         // 协程
         CoCondVar m_stReadCondVar;  // 等待读的协程
+    };
+
+    /**
+     * @brief TCP监听器
+     */
+    class TcpListener :
+        public IoHandle
+    {
+        friend class ObjectPool;
+
+    public:
+        static IoHandleHolder<TcpListener> Create();
+        static IoHandleHolder<TcpListener> Create(const EndPoint& address, bool ipv6Only=false);
+
+    private:
+        static void OnUVNewConnection(::uv_stream_t* server, int status)noexcept;
+
+    public:
+        TcpListener();
+
+    public:
+        /**
+         * @brief 获取本地地址
+         *
+         * 如果失败，返回空地址。
+         */
+        EndPoint GetLocalEndPoint()const noexcept;
+
+        /**
+         * @brief 绑定套接字
+         * @param address 绑定地址
+         * @param ipv6Only 是否仅IPV6地址
+         */
+        void Bind(const EndPoint& address, bool ipv6Only=false);
+
+        /**
+         * @brief 启动监听
+         * @param backlog 队列大小
+         */
+        void Listen(int backlog=128);
+
+        /**
+         * @brief （协程）等待并接受句柄
+         * @return 接受的Socket对象
+         */
+        IoHandleHolder<TcpSocket> CoAccept();
+
+    protected:
+        void OnClose()noexcept override;
+        void OnError(int error)noexcept;
+        void OnNewConnection()noexcept;
+
+    private:
+        ::uv_tcp_t m_stHandle;
+
+        // 协程
+        CoCondVar m_stAcceptCondVar;  // 等待对象的协程
     };
 }
 }

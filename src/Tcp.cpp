@@ -9,6 +9,8 @@ using namespace std;
 using namespace moe;
 using namespace UV;
 
+//////////////////////////////////////////////////////////////////////////////// TcpSocket
+
 namespace
 {
     struct ConnectRequest :
@@ -232,14 +234,13 @@ void TcpSocket::SetKeepAlive(bool enable, uint32_t delay)
     MOE_UV_CHECK(::uv_tcp_keepalive(&m_stHandle, enable ? 1 : 0, delay));
 }
 
-void TcpSocket::Bind(const EndPoint& address, bool reuse, bool ipv6Only)
+void TcpSocket::Bind(const EndPoint& address, bool ipv6Only)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
 
     unsigned flags = 0;
-    flags |= (reuse ? UV_UDP_REUSEADDR : 0);
-    flags |= (ipv6Only ? UV_UDP_IPV6ONLY : 0);
+    flags |= (ipv6Only ? UV_TCP_IPV6ONLY : 0);
     MOE_UV_CHECK(::uv_tcp_bind(&m_stHandle, reinterpret_cast<const sockaddr*>(&address.Storage), flags));
 }
 
@@ -514,4 +515,126 @@ void TcpSocket::OnEof()noexcept
 
     // 终止读句柄
     m_stReadCondVar.Resume(static_cast<ptrdiff_t>(false));
+}
+
+//////////////////////////////////////////////////////////////////////////////// TcpListener
+
+IoHandleHolder<TcpListener> TcpListener::Create()
+{
+    auto self = IoHandleHolder<TcpListener>(ObjectPool::Create<TcpListener>());
+    return self;
+}
+
+IoHandleHolder<TcpListener> TcpListener::Create(const EndPoint& address, bool ipv6Only)
+{
+    auto self = IoHandleHolder<TcpListener>(ObjectPool::Create<TcpListener>());
+    self->Bind(address, ipv6Only);
+    return self;
+}
+
+void TcpListener::OnUVNewConnection(::uv_stream_t* server, int status)noexcept
+{
+    auto self = GetSelf<TcpListener>(server);
+
+    if (status != 0)
+    {
+        // 通知错误发生
+        self->OnError(status);
+    }
+    else
+    {
+        // 通知新连接
+        self->OnNewConnection();
+    }
+}
+
+TcpListener::TcpListener()
+{
+    MOE_UV_CHECK(::uv_tcp_init(GetCurrentUVLoop(), &m_stHandle));
+    BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
+}
+
+EndPoint TcpListener::GetLocalEndPoint()const noexcept
+{
+    EndPoint ret;
+
+    if (!IsClosing())
+    {
+        int len = sizeof(EndPoint::Storage);
+        sockaddr* st = reinterpret_cast<sockaddr*>(&ret.Storage);
+        ::uv_tcp_getsockname(&m_stHandle, st, &len);
+    }
+
+    return ret;
+}
+
+void TcpListener::Bind(const EndPoint& address, bool ipv6Only)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+
+    unsigned flags = 0;
+    flags |= (ipv6Only ? UV_TCP_IPV6ONLY : 0);
+    MOE_UV_CHECK(::uv_tcp_bind(&m_stHandle, reinterpret_cast<const sockaddr*>(&address.Storage), flags));
+}
+
+void TcpListener::Listen(int backlog)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+
+    MOE_UV_CHECK(::uv_listen(reinterpret_cast<::uv_stream_t*>(&m_stHandle), backlog, OnUVNewConnection));
+}
+
+IoHandleHolder<TcpSocket> TcpListener::CoAccept()
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+
+    int ret = UV_EAGAIN;
+    auto socket = TcpSocket::Create();
+    while (ret == UV_EAGAIN)
+    {
+        ret = ::uv_accept(reinterpret_cast<::uv_stream_t*>(&m_stHandle),
+            reinterpret_cast<::uv_stream_t*>(&socket->m_stHandle));
+
+        if (ret == 0)
+            return socket;
+        else if (ret != UV_EAGAIN)
+            MOE_UV_THROW(ret);
+
+        // 等待协程
+        Coroutine::Suspend(m_stAcceptCondVar);
+    }
+
+    assert(false);
+}
+
+void TcpListener::OnClose()noexcept
+{
+    IoHandle::Close();
+}
+
+void TcpListener::OnError(int error)noexcept
+{
+    // 记录错误日志
+    MOE_UV_LOG_ERROR(error);
+
+    // 关闭连接
+    Close();
+
+    // 终止读句柄
+    try
+    {
+        MOE_UV_THROW(error);
+    }
+    catch (...)
+    {
+        m_stAcceptCondVar.ResumeException(current_exception());
+    }
+}
+
+void TcpListener::OnNewConnection()noexcept
+{
+    m_stAcceptCondVar.ResumeOne();
 }
