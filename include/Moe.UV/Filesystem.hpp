@@ -11,27 +11,180 @@ namespace moe
 {
 namespace UV
 {
+    class Filesystem;
+
+    /**
+     * @brief 文件状态
+     */
+    struct FileStatus
+    {
+        uint64_t DeviceId;  ///< @brief 设备ID
+        uint64_t Mode;  ///< @brief 文件保护模式
+        uint64_t HardLinks;  ///< @brief 硬连接个数
+        uint64_t Uid;  ///< @brief 用户ID
+        uint64_t Gid;  ///< @brief 组ID
+        uint64_t RealDeviceId;  ///< @brief 实际设备ID（特殊文件）
+        uint64_t InodeNumber;  ///< @brief 文件系统节点索引
+        uint64_t Size;  ///< @brief 文件大小（字节）
+        uint64_t BlockSize;  ///< @brief 系统单个块的大小
+        uint64_t Blocks;  ///< @brief 占用的块数
+        uint64_t Flags;  ///< @brief 标志（OSX）
+        uint64_t FileGeneration;  ///< @brief 文件代数（OSX）
+        Time::Timestamp LastAccessTime;  ///< @brief 最后访问时间
+        Time::Timestamp LastModificationTime;  ///< @brief 最后修改时间
+        Time::Timestamp LastStatusChangeTime;  ///< @brief 最后属性变动时间
+        Time::Timestamp CreationTime;  ///< @brief 创建时间
+    };
+
+    /**
+     * @brief 异步文件IO
+     */
+    class File :
+        public NonCopyable
+    {
+        friend class Filesystem;
+
+    protected:
+        File(::uv_file fd);
+
+    public:
+        File(File&& rhs)noexcept;
+        ~File();
+
+        operator bool()const noexcept;
+        File& operator=(File&& rhs)noexcept;
+
+    public:
+        /**
+         * @brief （协程）读取数据
+         * @param[in,out] buffer 缓冲区
+         * @param offset 偏移量
+         * @warning 缓冲区不能在协程栈上分配
+         */
+        void CoRead(MutableBytesView buffer, uint64_t offset=0);
+
+        /**
+         * @brief （协程）写入数据
+         * @param buffer 缓冲区
+         * @param offset 偏移量
+         * @warning 缓冲区不能再协程栈上分配
+         */
+        void CoWrite(BytesView buffer, uint64_t offset=0);
+
+        /**
+         * @brief （协程）截断文件到指定长度
+         * @param length 长度（字节）
+         */
+        void CoTruncate(uint64_t length);
+
+        /**
+         * @brief （协程）刷出数据
+         */
+        void CoFlush();
+
+        /**
+         * @brief （协程）刷出数据（仅数据，不含元信息）
+         */
+        void CoFlushData();
+
+        /**
+         * @brief （协程）获取文件状态
+         * @return 文件状态
+         */
+        FileStatus CoGetStatus();
+
+        /**
+         * @brief （协程）改变文件权限
+         * @param mode 模式
+         */
+        void CoChangeMode(int mode);
+
+        /**
+         * @brief （协程）改变文件拥有者
+         * @param uid 用户ID
+         * @param gid 组ID
+         *
+         * Windows不支持该操作，总是成功。
+         */
+        void CoChangeOwner(uv_uid_t uid, uv_gid_t gid);
+
+        /**
+         * @brief （协程）设置文件时间
+         * @param accessTime 访问时间
+         * @param modificationTime 修改时间
+         *
+         * 修改文件的时间，必须拥有对文件的所有权。
+         */
+        void CoSetFileTime(Time::Timestamp accessTime, Time::Timestamp modificationTime);
+
+        /**
+         * @brief （协程）关闭文件
+         */
+        void CoClose()noexcept;
+
+    private:
+        ::uv_file m_iFd = static_cast<::uv_file>(0);
+    };
+
+    /**
+     * @brief 异步文件系统操作
+     */
     class Filesystem
     {
     public:
-        struct FileStatus
+        /**
+         * @brief 目录项类型
+         */
+        enum class DirectoryEntryType
         {
-            uint64_t DeviceId;  ///< @brief 设备ID
-            uint64_t Mode;  ///< @brief 文件保护模式
-            uint64_t HardLinks;  ///< @brief 硬连接个数
-            uint64_t Uid;  ///< @brief 用户ID
-            uint64_t Gid;  ///< @brief 组ID
-            uint64_t RealDeviceId;  ///< @brief 实际设备ID（特殊文件）
-            uint64_t InodeNumber;  ///< @brief 文件系统节点索引
-            uint64_t Size;  ///< @brief 文件大小（字节）
-            uint64_t BlockSize;  ///< @brief 系统单个块的大小
-            uint64_t Blocks;  ///< @brief 占用的块数
-            uint64_t Flags;  ///< @brief 标志（OSX）
-            uint64_t FileGeneration;  ///< @brief 文件代数（OSX）
-            Time::Timestamp LastAccessTime;  ///< @brief 最后访问时间
-            Time::Timestamp LastModificationTime;  ///< @brief 最后修改时间
-            Time::Timestamp LastStatusChangeTime;  ///< @brief 最后属性变动时间
-            Time::Timestamp CreationTime;  ///< @brief 创建时间
+            Unknown,
+            File,
+            Directory,
+            Link,
+            Fifo,
+            Socket,
+            Char,
+            Block,
+        };
+
+        /**
+         * @brief 目录项
+         */
+        struct DirectoryEntry
+        {
+            const char* Name;
+            DirectoryEntryType Type;
+        };
+
+        /**
+         * @brief 文件夹迭代器
+         */
+        class DirectoryEnumerator :
+            public NonCopyable
+        {
+            friend class Filesystem;
+
+        public:
+            DirectoryEnumerator() = default;
+            DirectoryEnumerator(DirectoryEnumerator&& rhs)noexcept;
+            ~DirectoryEnumerator();
+
+            operator bool() const noexcept { return m_pUVRequest != nullptr; }
+            DirectoryEnumerator& operator=(DirectoryEnumerator&& rhs)noexcept;
+
+        public:
+            bool IsEof()const noexcept { return m_bIsEof; }
+
+            /**
+             * @brief 枚举下一个元素
+             * @param[out] entry 枚举结果
+             * @return 是否成功枚举元素，如果返回true则entry为一个有效的项目
+             */
+            bool Next(DirectoryEntry& entry);
+
+        private:
+            void* m_pUVRequest = nullptr;  // 擦除类型
+            bool m_bIsEof = false;
         };
 
         /**
@@ -43,11 +196,14 @@ namespace UV
 
         /**
          * @brief （协程）检查文件权限
+         * @see https://linux.die.net/man/2/access
          * @param path 路径
          * @param readAccess 读权限
          * @param writeAccess 写权限
          * @param execAccess 运行权限
          * @return 权限是否可满足
+         *
+         * 请参考access手册。
          */
         static bool CoAccess(const char* path, bool readAccess=true, bool writeAccess=false, bool execAccess=false);
 
@@ -57,7 +213,7 @@ namespace UV
          * @param path 路径
          * @param mode 模式
          *
-         * 请参照chmod手册。
+         * 请参考chmod手册。
          */
         static void CoChangeMode(const char* path, int mode);
 
@@ -68,8 +224,8 @@ namespace UV
          * @param uid 用户ID
          * @param gid 组ID
          *
-         * 请参照chown手册。
-         * Windows不支持该操作，总是返回成功。
+         * 请参考chown手册。
+         * Windows不支持该操作，总是成功。
          */
         static void CoChangeOwner(const char* path, uv_uid_t uid, uv_gid_t gid);
 
@@ -79,7 +235,7 @@ namespace UV
          * @param path 路径
          * @param mode 模式，Windows忽略该参数
          *
-         * 请参照mkdir手册。
+         * 请参考mkdir手册。
          */
         static void CoCreateDirectory(const char* path, int mode=0755);
 
@@ -94,6 +250,17 @@ namespace UV
         static void CoRemoveDirectory(const char* path);
 
         /**
+         * @brief （协程）构造临时文件
+         * @see https://linux.die.net/man/3/mkdtemp
+         * @param tpl 文件名模板，如"/tmp/temp.XXXXXX"，其中XXXXXX必须为后缀
+         * @return 文件名
+         *
+         * 通过传入的模板构造唯一的临时文件。
+         * 请参考mkdtemp手册。
+         */
+        static std::string CoMakeTempDirectory(const char* tpl);
+
+        /**
          * @brief (协程）获取文件属性
          * @see https://linux.die.net/man/2/stat
          * @param path 路径
@@ -101,7 +268,7 @@ namespace UV
          *
          * 请参考stat手册。
          */
-        static FileStatus CoGetFileStatus(const char* path);
+        static FileStatus CoGetStatus(const char* path);
 
         /**
          * @brief (协程）获取符号文件属性
@@ -146,7 +313,7 @@ namespace UV
          *  - UV_FS_SYMLINK_DIR 表明创建目录的符号连接
          *  - UV_FS_SYMLINK_JUNCTION 使用junction points创建符号连接
          */
-        static void CoSymbolicLink(const char* path, const char* newPath, int flags);
+        static void CoSymbolicLink(const char* path, const char* newPath, int flags=0);
 
         /**
          * @brief （协程）读取连接
@@ -157,23 +324,40 @@ namespace UV
          */
         static std::string CoReadLink(const char* path);
 
-        /* TODO
-         * uv_fs_utime(uv_loop_t* loop, uv_fs_t* req, const char* path, double atime, double mtime, uv_fs_cb cb)
-         * uv_fs_rename(uv_loop_t* loop, uv_fs_t* req, const char* path, const char* new_path, uv_fs_cb cb)
-         * uv_fs_mkdtemp(uv_loop_t* loop, uv_fs_t* req, const char* tpl, uv_fs_cb cb)
-         * uv_fs_copyfile(uv_loop_t* loop, uv_fs_t* req, const char* path, const char* new_path, int flags, uv_fs_cb cb)
+        /**
+         * @brief （协程）设置文件时间
+         * @see https://linux.die.net/man/2/utime
+         * @param path 路径
+         * @param accessTime 访问时间
+         * @param modificationTime 修改时间
          *
-         * uv_fs_scandir(uv_loop_t* loop, uv_fs_t* req, const char* path, int flags, uv_fs_cb cb)
-         * uv_fs_scandir_next
-         *
-         * uv_fs_fstat
-         * uv_fs_fsync
-         * uv_fs_fdatasync
-         * uv_fs_ftruncate
-         * uv_fs_fchmod
-         * uv_fs_futime
-         * uv_fs_fchown
+         * 修改文件的时间，必须拥有对文件的所有权。
+         * 请参考utime手册。
          */
+        static void CoSetFileTime(const char* path, Time::Timestamp accessTime, Time::Timestamp modificationTime);
+
+        /**
+         * @brief （协程）重命名（移动）文件
+         * @see https://linux.die.net/man/2/rename
+         * @param path 路径
+         * @param newPath 新路径
+         *
+         * 重命名文件，如果新文件所在路径存在则会先删除。
+         * 请参考rename手册。
+         */
+        static void CoRename(const char* path, const char* newPath);
+
+        /**
+         * @brief （协程）扫描目录
+         * @see https://linux.die.net/man/3/scandir
+         * @param path 目录
+         * @param flags 标志位
+         * @return 文件夹迭代器
+         *
+         * 相比较scandir，不会显示"."和".."的项目。
+         * 请参考scandir手册。
+         */
+        static DirectoryEnumerator CoScanDirectory(const char* path, int flags=0);
     };
 }
 }

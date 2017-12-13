@@ -196,7 +196,7 @@ namespace UV
 
 #define MOE_UV_LOG_ERROR(status) \
     do { \
-        if ((status) != 0) { \
+        if ((status) < 0) { \
             const char* err = ::uv_strerror((status)); \
             MOE_ERROR("libuv error {0}: {1}", (status), err); \
         } \
@@ -205,7 +205,7 @@ namespace UV
 #define MOE_UV_CHECK(status) \
     do { \
         auto ret = (status); \
-        if (ret != 0) \
+        if (ret < 0) \
             MOE_UV_THROW(ret); \
     } while (false)
 

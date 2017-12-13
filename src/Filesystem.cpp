@@ -5,7 +5,11 @@
  */
 #include <Moe.UV/Filesystem.hpp>
 #include <Moe.UV/RunLoop.hpp>
-#include <uv.h>
+#include <Moe.Core/Utils.hpp>
+
+#ifndef MOE_WINDOWS
+#include <unistd.h>
+#endif
 
 using namespace std;
 using namespace moe;
@@ -39,6 +43,99 @@ namespace
     };
 }
 
+//////////////////////////////////////////////////////////////////////////////// File
+
+/* TODO
+ * uv_fs_close(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb)
+ * uv_fs_read(uv_loop_t* loop, uv_fs_t* req, uv_file file, const uv_buf_t bufs[], unsigned int nbufs, int64_t offset, uv_fs_cb cb)
+ * uv_fs_write(uv_loop_t* loop, uv_fs_t* req, uv_file file, const uv_buf_t bufs[], unsigned int nbufs, int64_t offset, uv_fs_cb cb)
+ * uv_fs_fstat(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb)
+ * uv_fs_fsync(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb)
+ * uv_fs_fdatasync(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb)
+ * uv_fs_ftruncate(uv_loop_t* loop, uv_fs_t* req, uv_file file, int64_t offset, uv_fs_cb cb)
+ * uv_fs_fchmod(uv_loop_t* loop, uv_fs_t* req, uv_file file, int mode, uv_fs_cb cb)
+ * uv_fs_futime(uv_loop_t* loop, uv_fs_t* req, uv_file file, double atime, double mtime, uv_fs_cb cb)
+ * uv_fs_fchown(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_uid_t uid, uv_gid_t gid, uv_fs_cb cb)
+ */
+
+//////////////////////////////////////////////////////////////////////////////// DirectoryEnumerator
+
+Filesystem::DirectoryEnumerator::DirectoryEnumerator(DirectoryEnumerator&& rhs)noexcept
+    : m_pUVRequest(rhs.m_pUVRequest), m_bIsEof(rhs.m_bIsEof)
+{
+    rhs.m_pUVRequest = nullptr;
+    rhs.m_bIsEof = false;
+}
+
+Filesystem::DirectoryEnumerator::~DirectoryEnumerator()
+{
+    RefPtr<UVFileSysReq> p(static_cast<UVFileSysReq*>(m_pUVRequest));
+}
+
+Filesystem::DirectoryEnumerator& Filesystem::DirectoryEnumerator::operator=(DirectoryEnumerator&& rhs)noexcept
+{
+    RefPtr<UVFileSysReq> p(static_cast<UVFileSysReq*>(m_pUVRequest));
+
+    m_pUVRequest = nullptr;
+    m_bIsEof = false;
+    std::swap(m_pUVRequest, rhs.m_pUVRequest);
+    std::swap(m_bIsEof, rhs.m_bIsEof);
+    return *this;
+}
+
+bool Filesystem::DirectoryEnumerator::Next(DirectoryEntry& entry)
+{
+    if (!m_pUVRequest)
+        MOE_THROW(InvalidCallException, "Null object");
+    if (m_bIsEof)
+        return false;
+
+    UVFileSysReq* req = static_cast<UVFileSysReq*>(m_pUVRequest);
+
+    uv_dirent_t out;
+    auto ret = ::uv_fs_scandir_next(&req->Request, &out);
+    if (ret == UV_EOF)
+    {
+        m_bIsEof = true;
+        return false;
+    }
+    else if (ret != 0)
+        MOE_UV_THROW(ret);
+
+    entry.Name = out.name;
+    switch (out.type)
+    {
+        case UV_DIRENT_FILE:
+            entry.Type = DirectoryEntryType::File;
+            break;
+        case UV_DIRENT_DIR:
+            entry.Type = DirectoryEntryType::Directory;
+            break;
+        case UV_DIRENT_LINK:
+            entry.Type = DirectoryEntryType::Link;
+            break;
+        case UV_DIRENT_FIFO:
+            entry.Type = DirectoryEntryType::Fifo;
+            break;
+        case UV_DIRENT_SOCKET:
+            entry.Type = DirectoryEntryType::Socket;
+            break;
+        case UV_DIRENT_CHAR:
+            entry.Type = DirectoryEntryType::Char;
+            break;
+        case UV_DIRENT_BLOCK:
+            entry.Type = DirectoryEntryType::Block;
+            break;
+        case UV_DIRENT_UNKNOWN:
+        default:
+            entry.Type = DirectoryEntryType::Unknown;
+            break;
+    }
+    return true;
+}
+
+//////////////////////////////////////////////////////////////////////////////// Filesystem
+
 bool Filesystem::CoExists(const char* path)
 {
     if (!Coroutine::InCoroutineContext())
@@ -56,8 +153,11 @@ bool Filesystem::CoExists(const char* path)
 
     // 获取结果
     auto ret = static_cast<int>(req->Request.result);
-    if (ret == 0)
+    if (ret >= 0)
+    {
+        assert(ret == 0);
         return true;
+    }
     else if (ret != UV_ENOENT)
         MOE_UV_THROW(ret);
     return false;
@@ -85,8 +185,11 @@ bool Filesystem::CoAccess(const char* path, bool readAccess, bool writeAccess, b
 
     // 获取结果
     auto ret = static_cast<int>(req->Request.result);
-    if (ret == 0)
+    if (ret >= 0)
+    {
+        assert(ret == 0);
         return true;
+    }
     else if (ret != UV_EACCES)
         MOE_UV_THROW(ret);
     return false;
@@ -168,7 +271,27 @@ void Filesystem::CoRemoveDirectory(const char* path)
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
 }
 
-Filesystem::FileStatus Filesystem::CoGetFileStatus(const char* path)
+std::string Filesystem::CoMakeTempDirectory(const char* tpl)
+{
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_mkdtemp(RunLoop::GetCurrentUVLoop(), &req->Request, tpl, UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+    return req->Request.path;
+}
+
+FileStatus Filesystem::CoGetStatus(const char* path)
 {
     if (!Coroutine::InCoroutineContext())
         MOE_THROW(InvalidCallException, "Bad execution context");
@@ -184,9 +307,7 @@ Filesystem::FileStatus Filesystem::CoGetFileStatus(const char* path)
     Coroutine::Suspend(req->CondVar);
 
     // 获取结果
-    if (req->Request.result != 0)
-        MOE_UV_THROW(static_cast<int>(req->Request.result));
-
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
     const auto& stat = req->Request.statbuf;
 
     FileStatus ret;
@@ -211,7 +332,7 @@ Filesystem::FileStatus Filesystem::CoGetFileStatus(const char* path)
     return ret;
 }
 
-Filesystem::FileStatus Filesystem::CoGetSymbolicLinkStatus(const char* path)
+FileStatus Filesystem::CoGetSymbolicLinkStatus(const char* path)
 {
     if (!Coroutine::InCoroutineContext())
         MOE_THROW(InvalidCallException, "Bad execution context");
@@ -227,9 +348,7 @@ Filesystem::FileStatus Filesystem::CoGetSymbolicLinkStatus(const char* path)
     Coroutine::Suspend(req->CondVar);
 
     // 获取结果
-    if (req->Request.result != 0)
-        MOE_UV_THROW(static_cast<int>(req->Request.result));
-
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
     const auto& stat = req->Request.statbuf;
 
     FileStatus ret;
@@ -328,7 +447,69 @@ std::string Filesystem::CoReadLink(const char* path)
     Coroutine::Suspend(req->CondVar);
 
     // 获取结果
-    if (req->Request.result != 0)
-        MOE_UV_CHECK(static_cast<int>(req->Request.result));
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
     return string(reinterpret_cast<const char*>(req->Request.ptr));
+}
+
+void Filesystem::CoSetFileTime(const char* path, Time::Timestamp accessTime, Time::Timestamp modificationTime)
+{
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_utime(RunLoop::GetCurrentUVLoop(), &req->Request, path, accessTime / 1000.,
+        modificationTime / 1000., UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+}
+
+void Filesystem::CoRename(const char* path, const char* newPath)
+{
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_rename(RunLoop::GetCurrentUVLoop(), &req->Request, path, newPath, UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+}
+
+Filesystem::DirectoryEnumerator Filesystem::CoScanDirectory(const char* path, int flags)
+{
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_scandir(RunLoop::GetCurrentUVLoop(), &req->Request, path, flags, UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+
+    // 返回结果
+    DirectoryEnumerator ret;
+    ret.m_pUVRequest = req.Release();
+    return ret;
 }

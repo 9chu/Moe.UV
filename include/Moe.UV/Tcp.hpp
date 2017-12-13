@@ -131,7 +131,7 @@ namespace UV
 
         /**
          * @brief （协程）读取若干字节
-         * @param[inout] target 目标缓冲区
+         * @param[in,out] target 目标缓冲区
          * @param[out] count 数量
          * @return 是否收到数据，若为false表示操作被取消
          *
