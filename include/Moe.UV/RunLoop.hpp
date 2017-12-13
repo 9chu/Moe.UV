@@ -18,6 +18,7 @@ namespace moe
 namespace UV
 {
     class Dns;
+    class Filesystem;
 
     /**
      * @brief 程序循环
@@ -27,6 +28,7 @@ namespace UV
     {
         friend class IoHandle;
         friend class Dns;
+        friend class Filesystem;
 
     public:
         /**
