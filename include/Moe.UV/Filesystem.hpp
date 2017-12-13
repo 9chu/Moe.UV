@@ -67,7 +67,7 @@ namespace UV
          * @brief （协程）写入数据
          * @param buffer 缓冲区
          * @param offset 偏移量
-         * @warning 缓冲区不能再协程栈上分配
+         * @warning 缓冲区不能在协程栈上分配
          */
         void CoWrite(BytesView buffer, uint64_t offset=0);
 
