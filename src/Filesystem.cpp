@@ -27,9 +27,6 @@
 #ifndef O_EXCL
 #define O_EXCL _O_EXCL
 #endif
-#ifndef O_BINARY
-#define O_BINARY _O_BINARY
-#endif
 #else
 #include <unistd.h>
 #endif
@@ -811,7 +808,7 @@ File Filesystem::CoOpen(const char* path, int flags, int mode)
 
 File Filesystem::CoOpen(const char* path, FileOpenMode openMode, FileAccessType access)
 {
-    int flags = O_BINARY;
+    int flags = 0;
     switch (openMode)
     {
         case FileOpenMode::Create:
