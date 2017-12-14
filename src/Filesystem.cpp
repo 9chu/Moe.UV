@@ -838,5 +838,5 @@ File Filesystem::CoOpen(const char* path, FileOpenMode openMode, FileAccessType 
             break;
     }
 
-    return CoOpen(path, flags, 0);
+    return CoOpen(path, flags, 0644);
 }

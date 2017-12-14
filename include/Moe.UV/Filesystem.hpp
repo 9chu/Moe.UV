@@ -392,7 +392,7 @@ namespace UV
          * @see http://man7.org/linux/man-pages/man2/open.2.html
          * @param path 路径
          * @param flags 标志，为UNIX标志位
-         * @param mode 模式，为UNIX标志位
+         * @param mode 访问权限，为UNIX标志位，如0644
          * @return 文件对象
          */
         static File CoOpen(const char* path, int flags, int mode);
