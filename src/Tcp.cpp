@@ -608,6 +608,7 @@ IoHandleHolder<TcpSocket> TcpListener::CoAccept()
     }
 
     assert(false);
+    return IoHandleHolder<TcpSocket>();
 }
 
 void TcpListener::OnClose()noexcept

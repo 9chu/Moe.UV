@@ -7,7 +7,30 @@
 #include <Moe.UV/RunLoop.hpp>
 #include <Moe.Core/Utils.hpp>
 
-#ifndef MOE_WINDOWS
+#ifdef MOE_WINDOWS
+#include <io.h>
+#ifndef O_RDONLY
+#define O_RDONLY _O_RDONLY
+#endif
+#ifndef O_WRONLY
+#define O_WRONLY _O_WRONLY
+#endif
+#ifndef O_RDWR
+#define O_RDWR _O_RDWR
+#endif
+#ifndef O_CREAT
+#define O_CREAT _O_CREAT
+#endif
+#ifndef O_TRUNC
+#define O_TRUNC _O_TRUNC
+#endif
+#ifndef O_EXCL
+#define O_EXCL _O_EXCL
+#endif
+#ifndef O_BINARY
+#define O_BINARY _O_BINARY
+#endif
+#else
 #include <unistd.h>
 #endif
 
@@ -41,22 +64,313 @@ namespace
             self->CondVar.Resume();
         }
     };
+
+    inline FileStatus ToFileStatus(const ::uv_stat_t& stat)
+    {
+        FileStatus ret;
+        ::memset(&ret, 0, sizeof(ret));
+
+        ret.DeviceId = stat.st_dev;
+        ret.Mode = stat.st_mode;
+        ret.HardLinks = stat.st_nlink;
+        ret.Uid = stat.st_uid;
+        ret.Gid = stat.st_gid;
+        ret.RealDeviceId = stat.st_rdev;
+        ret.InodeNumber = stat.st_ino;
+        ret.Size = stat.st_size;
+        ret.BlockSize = stat.st_blksize;
+        ret.Blocks = stat.st_blocks;
+        ret.Flags = stat.st_flags;
+        ret.FileGeneration = stat.st_gen;
+        ret.LastAccessTime = static_cast<Time::Tick>(stat.st_atim.tv_sec * 1000ull + stat.st_atim.tv_nsec / 1000000);
+        ret.LastModificationTime = static_cast<Time::Tick>(stat.st_mtim.tv_sec * 1000ull +
+            stat.st_mtim.tv_nsec / 1000000);
+        ret.LastStatusChangeTime = static_cast<Time::Tick>(stat.st_ctim.tv_sec * 1000ull +
+            stat.st_ctim.tv_nsec / 1000000);
+        ret.CreationTime = static_cast<Time::Tick>(stat.st_birthtim.tv_sec * 1000ull +
+            stat.st_birthtim.tv_nsec / 1000000);
+        return ret;
+    }
 }
 
 //////////////////////////////////////////////////////////////////////////////// File
 
-/* TODO
- * uv_fs_close(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb)
- * uv_fs_read(uv_loop_t* loop, uv_fs_t* req, uv_file file, const uv_buf_t bufs[], unsigned int nbufs, int64_t offset, uv_fs_cb cb)
- * uv_fs_write(uv_loop_t* loop, uv_fs_t* req, uv_file file, const uv_buf_t bufs[], unsigned int nbufs, int64_t offset, uv_fs_cb cb)
- * uv_fs_fstat(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb)
- * uv_fs_fsync(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb)
- * uv_fs_fdatasync(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb)
- * uv_fs_ftruncate(uv_loop_t* loop, uv_fs_t* req, uv_file file, int64_t offset, uv_fs_cb cb)
- * uv_fs_fchmod(uv_loop_t* loop, uv_fs_t* req, uv_file file, int mode, uv_fs_cb cb)
- * uv_fs_futime(uv_loop_t* loop, uv_fs_t* req, uv_file file, double atime, double mtime, uv_fs_cb cb)
- * uv_fs_fchown(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_uid_t uid, uv_gid_t gid, uv_fs_cb cb)
- */
+File::File(::uv_file fd)noexcept
+    : m_iFd(fd)
+{
+}
+
+File::File(File&& rhs)noexcept
+    : m_iFd(rhs.m_iFd)
+{
+    rhs.m_iFd = 0;
+}
+
+File::~File()
+{
+    Close();
+}
+
+File::operator bool()const noexcept
+{
+    return m_iFd != 0;
+}
+
+File& File::operator=(File&& rhs)noexcept
+{
+    Close();
+    m_iFd = 0;  // 无视关闭失败
+
+    std::swap(m_iFd, rhs.m_iFd);
+    return *this;
+}
+
+size_t File::CoRead(MutableBytesView buffer, uint64_t offset)
+{
+    assert(offset <= std::numeric_limits<int64_t>::max());
+    if (m_iFd == 0)
+        MOE_THROW(InvalidCallException, "No file opened");
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+    if (buffer.GetSize() == 0)
+        return 0;
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    auto buf = ::uv_buf_init(reinterpret_cast<char*>(buffer.GetBuffer()), static_cast<unsigned>(buffer.GetSize()));
+    MOE_UV_CHECK(::uv_fs_read(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, &buf, 1, static_cast<int64_t>(offset),
+        UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+    return static_cast<size_t>(req->Request.result);
+}
+
+size_t File::CoWrite(BytesView buffer, uint64_t offset)
+{
+    assert(offset <= std::numeric_limits<int64_t>::max());
+    if (m_iFd == 0)
+        MOE_THROW(InvalidCallException, "No file opened");
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+    if (buffer.GetSize() == 0)
+        return 0;
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    auto buf = ::uv_buf_init(const_cast<char*>(reinterpret_cast<const char*>(buffer.GetBuffer())),
+        static_cast<unsigned>(buffer.GetSize()));
+    MOE_UV_CHECK(::uv_fs_write(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, &buf, 1, static_cast<int64_t>(offset),
+        UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+    return static_cast<size_t>(req->Request.result);
+}
+
+void File::CoTruncate(uint64_t length)
+{
+    assert(length <= std::numeric_limits<int64_t>::max());
+    if (m_iFd == 0)
+        MOE_THROW(InvalidCallException, "No file opened");
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_ftruncate(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, static_cast<int64_t>(length),
+        UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+}
+
+void File::CoFlush()
+{
+    if (m_iFd == 0)
+        MOE_THROW(InvalidCallException, "No file opened");
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_fsync(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+}
+
+void File::CoFlushData()
+{
+    if (m_iFd == 0)
+        MOE_THROW(InvalidCallException, "No file opened");
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_fdatasync(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+}
+
+FileStatus File::CoGetStatus()
+{
+    if (m_iFd == 0)
+        MOE_THROW(InvalidCallException, "No file opened");
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_fstat(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+    return ToFileStatus(req->Request.statbuf);
+}
+
+void File::CoChangeMode(int mode)
+{
+    if (m_iFd == 0)
+        MOE_THROW(InvalidCallException, "No file opened");
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_fchmod(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, mode, UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+}
+
+void File::CoChangeOwner(uv_uid_t uid, uv_gid_t gid)
+{
+    if (m_iFd == 0)
+        MOE_THROW(InvalidCallException, "No file opened");
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_fchown(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, uid, gid, UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+}
+
+void File::CoSetFileTime(Time::Timestamp accessTime, Time::Timestamp modificationTime)
+{
+    if (m_iFd == 0)
+        MOE_THROW(InvalidCallException, "No file opened");
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_futime(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, accessTime / 1000.,
+        modificationTime / 1000., UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+}
+
+bool File::Close()noexcept
+{
+    if (m_iFd == 0)
+        return true;
+
+    // 协程上下文则使用协程等待
+    if (Coroutine::InCoroutineContext())
+    {
+        MOE_UV_EAT_EXCEPT_BEGIN
+            auto req = ObjectPool::Create<UVFileSysReq>();
+            MOE_UV_CHECK(::uv_fs_close(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, UVFileSysReq::Callback));
+
+            // 手动增加一个引用计数
+            req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+            // 发起协程等待
+            // 此时协程栈和Request上各自持有一个引用计数
+            Coroutine::Suspend(req->CondVar);
+
+            // 获取结果
+            MOE_UV_CHECK(static_cast<int>(req->Request.result));
+
+            m_iFd = 0;
+            return true;
+        MOE_UV_EAT_EXCEPT_END
+        return false;
+    }
+
+    // 否则，阻塞等待
+    ::uv_fs_t request;
+    ::memset(&request, 0, sizeof(request));
+    MOE_UV_EAT_EXCEPT_BEGIN
+        MOE_UV_CHECK(::uv_fs_close(RunLoop::GetCurrentUVLoop(), &request, m_iFd, nullptr));
+        ::uv_fs_req_cleanup(&request);
+        m_iFd = 0;
+        return true;
+    MOE_UV_EAT_EXCEPT_END
+    ::uv_fs_req_cleanup(&request);
+    return false;
+}
 
 //////////////////////////////////////////////////////////////////////////////// DirectoryEnumerator
 
@@ -308,28 +622,7 @@ FileStatus Filesystem::CoGetStatus(const char* path)
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
-    const auto& stat = req->Request.statbuf;
-
-    FileStatus ret;
-    ::memset(&ret, 0, sizeof(ret));
-
-    ret.DeviceId = stat.st_dev;
-    ret.Mode = stat.st_mode;
-    ret.HardLinks = stat.st_nlink;
-    ret.Uid = stat.st_uid;
-    ret.Gid = stat.st_gid;
-    ret.RealDeviceId = stat.st_rdev;
-    ret.InodeNumber = stat.st_ino;
-    ret.Size = stat.st_size;
-    ret.BlockSize = stat.st_blksize;
-    ret.Blocks = stat.st_blocks;
-    ret.Flags = stat.st_flags;
-    ret.FileGeneration = stat.st_gen;
-    ret.LastAccessTime = static_cast<Time::Tick>(stat.st_atim.tv_sec * 1000ull + stat.st_atim.tv_nsec / 1000000);
-    ret.LastModificationTime = static_cast<Time::Tick>(stat.st_mtim.tv_sec * 1000ull + stat.st_mtim.tv_nsec / 1000000);
-    ret.LastStatusChangeTime = static_cast<Time::Tick>(stat.st_ctim.tv_sec * 1000ull + stat.st_ctim.tv_nsec / 1000000);
-    ret.CreationTime = static_cast<Time::Tick>(stat.st_birthtim.tv_sec * 1000ull + stat.st_birthtim.tv_nsec / 1000000);
-    return ret;
+    return ToFileStatus(req->Request.statbuf);
 }
 
 FileStatus Filesystem::CoGetSymbolicLinkStatus(const char* path)
@@ -349,28 +642,7 @@ FileStatus Filesystem::CoGetSymbolicLinkStatus(const char* path)
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
-    const auto& stat = req->Request.statbuf;
-
-    FileStatus ret;
-    ::memset(&ret, 0, sizeof(ret));
-
-    ret.DeviceId = stat.st_dev;
-    ret.Mode = stat.st_mode;
-    ret.HardLinks = stat.st_nlink;
-    ret.Uid = stat.st_uid;
-    ret.Gid = stat.st_gid;
-    ret.RealDeviceId = stat.st_rdev;
-    ret.InodeNumber = stat.st_ino;
-    ret.Size = stat.st_size;
-    ret.BlockSize = stat.st_blksize;
-    ret.Blocks = stat.st_blocks;
-    ret.Flags = stat.st_flags;
-    ret.FileGeneration = stat.st_gen;
-    ret.LastAccessTime = static_cast<Time::Tick>(stat.st_atim.tv_sec * 1000ull + stat.st_atim.tv_nsec / 1000000);
-    ret.LastModificationTime = static_cast<Time::Tick>(stat.st_mtim.tv_sec * 1000ull + stat.st_mtim.tv_nsec / 1000000);
-    ret.LastStatusChangeTime = static_cast<Time::Tick>(stat.st_ctim.tv_sec * 1000ull + stat.st_ctim.tv_nsec / 1000000);
-    ret.CreationTime = static_cast<Time::Tick>(stat.st_birthtim.tv_sec * 1000ull + stat.st_birthtim.tv_nsec / 1000000);
-    return ret;
+    return ToFileStatus(req->Request.statbuf);
 }
 
 void Filesystem::CoUnlink(const char* path)
@@ -512,4 +784,62 @@ Filesystem::DirectoryEnumerator Filesystem::CoScanDirectory(const char* path, in
     DirectoryEnumerator ret;
     ret.m_pUVRequest = req.Release();
     return ret;
+}
+
+File Filesystem::CoOpen(const char* path, int flags, int mode)
+{
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_open(RunLoop::GetCurrentUVLoop(), &req->Request, path, flags, mode, UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+
+    // 返回结果
+    assert(req->Request.result != 0);
+    return File(static_cast<::uv_file>(req->Request.result));
+}
+
+File Filesystem::CoOpen(const char* path, FileOpenMode openMode, FileAccessType access)
+{
+    int flags = O_BINARY;
+    switch (openMode)
+    {
+        case FileOpenMode::Create:
+            flags |= O_CREAT;
+            break;
+        case FileOpenMode::CreateNew:
+            flags |= (O_CREAT | O_EXCL);
+            break;
+        case FileOpenMode::Truncate:
+            flags |= O_TRUNC;
+            break;
+        case FileOpenMode::Default:
+        default:
+            break;
+    }
+
+    switch (access)
+    {
+        case FileAccessType::WriteOnly:
+            flags |= O_WRONLY;
+            break;
+        case FileAccessType::ReadWrite:
+            flags |= O_RDWR;
+            break;
+        case FileAccessType::ReadOnly:
+        default:
+            break;
+    }
+
+    return CoOpen(path, flags, 0);
 }

@@ -18,6 +18,7 @@ namespace moe
 namespace UV
 {
     class Dns;
+    class File;
     class Filesystem;
 
     /**
@@ -28,6 +29,7 @@ namespace UV
     {
         friend class IoHandle;
         friend class Dns;
+        friend class File;
         friend class Filesystem;
 
     public:

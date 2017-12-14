@@ -14,6 +14,27 @@ namespace UV
     class Filesystem;
 
     /**
+     * @brief 文件访问方式
+     */
+    enum class FileAccessType
+    {
+        ReadOnly = 0,
+        WriteOnly = 1,
+        ReadWrite = 2,
+    };
+
+    /**
+     * @brief 文件打开方式
+     */
+    enum class FileOpenMode
+    {
+        Default = 0,  // 如果文件存在则打开，否则报错
+        Create = 1,  // 如果文件不存在则创建
+        CreateNew = 2,  // 如果文件不存在则创建，如果存在则报错
+        Truncate = 3,  // 如果文件存在则打开并且截断到0字节
+    };
+
+    /**
      * @brief 文件状态
      */
     struct FileStatus
@@ -45,9 +66,10 @@ namespace UV
         friend class Filesystem;
 
     protected:
-        File(::uv_file fd);
+        File(::uv_file fd)noexcept;
 
     public:
+        File() = default;
         File(File&& rhs)noexcept;
         ~File();
 
@@ -60,16 +82,18 @@ namespace UV
          * @param[in,out] buffer 缓冲区
          * @param offset 偏移量
          * @warning 缓冲区不能在协程栈上分配
+         * @return 读取数量
          */
-        void CoRead(MutableBytesView buffer, uint64_t offset=0);
+        size_t CoRead(MutableBytesView buffer, uint64_t offset=0);
 
         /**
          * @brief （协程）写入数据
          * @param buffer 缓冲区
          * @param offset 偏移量
          * @warning 缓冲区不能在协程栈上分配
+         * @return 写入数量
          */
-        void CoWrite(BytesView buffer, uint64_t offset=0);
+        size_t CoWrite(BytesView buffer, uint64_t offset=0);
 
         /**
          * @brief （协程）截断文件到指定长度
@@ -118,9 +142,13 @@ namespace UV
         void CoSetFileTime(Time::Timestamp accessTime, Time::Timestamp modificationTime);
 
         /**
-         * @brief （协程）关闭文件
+         * @brief 关闭文件
+         * @return 若操作失败返回false
+         *
+         * 当处于协程上下文时将会发起协程操作等待关闭。
+         * 否则，将会阻塞当前线程。
          */
-        void CoClose()noexcept;
+        bool Close()noexcept;
 
     private:
         ::uv_file m_iFd = static_cast<::uv_file>(0);
@@ -358,6 +386,28 @@ namespace UV
          * 请参考scandir手册。
          */
         static DirectoryEnumerator CoScanDirectory(const char* path, int flags=0);
+
+        /**
+         * @brief （协程）打开文件
+         * @see http://man7.org/linux/man-pages/man2/open.2.html
+         * @param path 路径
+         * @param flags 标志，为UNIX标志位
+         * @param mode 模式，为UNIX标志位
+         * @return 文件对象
+         */
+        static File CoOpen(const char* path, int flags, int mode);
+
+        /**
+         * @brief （协程）打开文件
+         * @param path 路径
+         * @param openMode 打开模式
+         * @param access 访问方式
+         * @return 文件对象
+         *
+         * 该方法是对CoOpen的封装，以避免暴露对UNIX标志位的使用。
+         */
+        static File CoOpen(const char* path, FileOpenMode openMode=FileOpenMode::Default,
+            FileAccessType access=FileAccessType::ReadOnly);
     };
 }
 }
