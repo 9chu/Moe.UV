@@ -172,30 +172,30 @@ EndPoint EndPoint::FromIpv4(const char* addr, uint16_t port)
         {
             unsigned int nw = *tp * 10 + static_cast<unsigned>(ch - '0');
             if (sawDigit && *tp == 0)
-                MOE_THROW(BadFormat, "Invalid ipv4 address");
+                MOE_THROW(BadFormatException, "Invalid ipv4 address");
             if (nw > 255)
-                MOE_THROW(BadFormat, "Invalid ipv4 address");
+                MOE_THROW(BadFormatException, "Invalid ipv4 address");
             *tp = static_cast<uint8_t>(nw);
 
             if (!sawDigit)
             {
                 if (++octets > 4)
-                    MOE_THROW(BadFormat, "Invalid ipv4 address");
+                    MOE_THROW(BadFormatException, "Invalid ipv4 address");
                 sawDigit = 1;
             }
         }
         else if (ch == '.' && sawDigit)
         {
             if (octets == 4)
-                MOE_THROW(BadFormat, "Invalid ipv4 address");
+                MOE_THROW(BadFormatException, "Invalid ipv4 address");
             *(++tp) = 0;
             sawDigit = 0;
         }
         else
-            MOE_THROW(BadFormat, "Invalid ipv4 address");
+            MOE_THROW(BadFormatException, "Invalid ipv4 address");
     }
     if (octets < 4)
-        MOE_THROW(BadFormat, "Invalid ipv4 address");
+        MOE_THROW(BadFormatException, "Invalid ipv4 address");
 
     return EndPoint(zero);
 }

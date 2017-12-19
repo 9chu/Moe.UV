@@ -720,6 +720,26 @@ std::string Filesystem::CoReadLink(const char* path)
     return string(reinterpret_cast<const char*>(req->Request.ptr));
 }
 
+std::string Filesystem::CoRealPath(const char* path)
+{
+    if (!Coroutine::InCoroutineContext())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto req = ObjectPool::Create<UVFileSysReq>();
+    MOE_UV_CHECK(::uv_fs_realpath(RunLoop::GetCurrentUVLoop(), &req->Request, path, UVFileSysReq::Callback));
+
+    // 手动增加一个引用计数
+    req->Request.data = RefPtr<UVFileSysReq>(req).Release();
+
+    // 发起协程等待
+    // 此时协程栈和Request上各自持有一个引用计数
+    Coroutine::Suspend(req->CondVar);
+
+    // 获取结果
+    MOE_UV_CHECK(static_cast<int>(req->Request.result));
+    return string(reinterpret_cast<const char*>(req->Request.ptr));
+}
+
 void Filesystem::CoSetFileTime(const char* path, Time::Timestamp accessTime, Time::Timestamp modificationTime)
 {
     if (!Coroutine::InCoroutineContext())

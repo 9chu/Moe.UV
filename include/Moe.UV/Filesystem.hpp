@@ -353,6 +353,16 @@ namespace UV
         static std::string CoReadLink(const char* path);
 
         /**
+         * @brief （协程）获取规范化的绝对路径
+         * @see https://linux.die.net/man/3/realpath
+         * @param path 路径
+         *
+         * 会去掉符号路径。
+         * 请参考realpath手册。
+         */
+        static std::string CoRealPath(const char* path);
+
+        /**
          * @brief （协程）设置文件时间
          * @see https://linux.die.net/man/2/utime
          * @param path 路径
