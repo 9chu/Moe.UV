@@ -57,8 +57,8 @@ bool Timer::Stop()noexcept
 
 bool Timer::CoWait()
 {
-    if (!m_pHandle)
-        MOE_THROW(InvalidCallException, "Timer is not started");
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Timer is already closed");
     auto ret = Coroutine::Suspend(m_stTickCondVar);
     return static_cast<bool>(ret);
 }
