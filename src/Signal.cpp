@@ -68,4 +68,11 @@ void Signal::OnSignal(int signum)noexcept
 {
     if (m_iWatchedSignum == signum)
         m_stSignalCondVar.Resume(static_cast<ptrdiff_t>(true));
+
+    if (m_stOnSignalCallback)
+    {
+        MOE_UV_EAT_EXCEPT_BEGIN
+            m_stOnSignalCallback(signum);
+        MOE_UV_EAT_EXCEPT_END
+    }
 }

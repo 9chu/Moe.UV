@@ -66,7 +66,8 @@ namespace UV
          * @brief 创建并启动协程
          * @param entry 入口
          */
-        static void Start(std::function<void()> entry);
+        static void Start(std::function<void()>&& entry);
+        static void Start(const std::function<void()>& entry);
     };
 
     /**
@@ -114,7 +115,8 @@ namespace UV
             CoCondVar* CondVar = nullptr;
             CoroutineController* WaitNext;
 
-            void Reset(std::function<void()> entry);
+            void Reset(std::function<void()>&& entry);
+            void Reset(const std::function<void()>& entry);
         };
 
         static void CoroutineWrapper(ContextTransfer transfer)noexcept;
@@ -172,7 +174,8 @@ namespace UV
         ptrdiff_t SuspendCurrent(CoCondVar& handle);
 
         CoroutineController* Alloc();
-        void Start(std::function<void()> entry);
+        void Start(std::function<void()>&& entry);
+        void Start(const std::function<void()>& entry);
 
     private:
         // 就绪链表

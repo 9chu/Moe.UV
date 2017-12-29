@@ -20,6 +20,9 @@ namespace UV
         friend class ObjectPool;
 
     public:
+        using OnSignalCallback = std::function<void(int)>;
+
+    public:
         /**
          * @brief 创建一个信号侦听器
          */
@@ -32,6 +35,18 @@ namespace UV
         Signal();
 
     public:
+        /**
+         * @brief 获取回调函数
+         */
+        const OnSignalCallback& GetOnSignalCallback()const noexcept { return m_stOnSignalCallback; }
+
+        /**
+         * @brief 设置回调函数
+         * @param callback 回调函数
+         */
+        void SetOnSignalCallback(OnSignalCallback&& callback)noexcept { m_stOnSignalCallback = std::move(callback); }
+        void SetOnSignalCallback(const OnSignalCallback& callback) { m_stOnSignalCallback = callback; }
+
         /**
          * @brief 启动信号
          */
@@ -61,6 +76,9 @@ namespace UV
 
         // 协程
         CoCondVar m_stSignalCondVar;  // 等待信号的协程
+
+        // 回调
+        OnSignalCallback m_stOnSignalCallback;
     };
 }
 }

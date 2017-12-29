@@ -44,7 +44,15 @@ ptrdiff_t Coroutine::Suspend(CoCondVar& handle)
     return scheduler->SuspendCurrent(handle);
 }
 
-void Coroutine::Start(std::function<void()> entry)
+void Coroutine::Start(std::function<void()>&& entry)
+{
+    auto scheduler = Scheduler::GetCurrent();
+    if (!scheduler)
+        MOE_THROW(InvalidCallException, "Bad execution context");
+    scheduler->Start(std::move(entry));
+}
+
+void Coroutine::Start(const std::function<void()>& entry)
 {
     auto scheduler = Scheduler::GetCurrent();
     if (!scheduler)
@@ -54,11 +62,26 @@ void Coroutine::Start(std::function<void()> entry)
 
 //////////////////////////////////////////////////////////////////////////////// CoroutineController
 
-void Scheduler::CoroutineController::Reset(std::function<void()> entry)
+void Scheduler::CoroutineController::Reset(std::function<void()>&& entry)
 {
     Prev = nullptr;
     Next = nullptr;
     Entry = std::move(entry);
+    State = CoroutineState::Created;
+    ResumeType = CoroutineResumeType::Normally;
+    ResumeData = 0;
+    ExceptionPtr = std::exception_ptr();
+    Context = nullptr;
+    StackBuffer.clear();
+    CondVar = nullptr;
+    WaitNext = nullptr;
+}
+
+void Scheduler::CoroutineController::Reset(const std::function<void()>& entry)
+{
+    Prev = nullptr;
+    Next = nullptr;
+    Entry = entry;
     State = CoroutineState::Created;
     ResumeType = CoroutineResumeType::Normally;
     ResumeData = 0;
@@ -345,10 +368,19 @@ Scheduler::CoroutineController* Scheduler::Alloc()
     return p;
 }
 
-void Scheduler::Start(std::function<void()> entry)
+void Scheduler::Start(std::function<void()>&& entry)
 {
     auto p = Alloc();
     p->Reset(std::move(entry));
+
+    INSERT_AT_LINK_TAIL(m_pReadyHead, m_pReadyTail, p);
+    ++m_uReadyCount;
+}
+
+void Scheduler::Start(const std::function<void()>& entry)
+{
+    auto p = Alloc();
+    p->Reset(entry);
 
     INSERT_AT_LINK_TAIL(m_pReadyHead, m_pReadyTail, p);
     ++m_uReadyCount;
