@@ -17,6 +17,9 @@
 #ifdef min
 #undef min
 #endif
+#ifdef GetCurrentTime
+#undef GetCurrentTime
+#endif
 
 namespace moe
 {
