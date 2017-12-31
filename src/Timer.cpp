@@ -75,10 +75,10 @@ void Timer::OnTick()noexcept
 {
     m_stTickCondVar.Resume(static_cast<ptrdiff_t>(true));
 
-    if (m_stOnTickCallback)
+    if (m_stCallback)
     {
         MOE_UV_EAT_EXCEPT_BEGIN
-            m_stOnTickCallback();
+            m_stCallback();
         MOE_UV_EAT_EXCEPT_END
     }
 }

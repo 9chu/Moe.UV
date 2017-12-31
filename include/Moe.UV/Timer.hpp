@@ -17,9 +17,8 @@ namespace UV
         friend class ObjectPool;
 
     public:
-        using OnTickCallback = std::function<void()>;
+        using CallbackType = std::function<void()>;
 
-    public:
         static IoHandleHolder<Timer> Create(Time::Tick interval=100);
 
     private:
@@ -30,6 +29,9 @@ namespace UV
         ~Timer();
 
     public:
+        CallbackType GetCallback()const noexcept { return m_stCallback; }
+        void SetCallback(CallbackType callback) { m_stCallback = callback; }
+
         /**
          * @brief 获取时间间隔
          */
@@ -41,18 +43,6 @@ namespace UV
          * 如果需要在计时器执行时调整间隔，需要先Stop再Start。
          */
         void SetInterval(Time::Tick interval)noexcept { m_ullInterval = interval; }
-
-        /**
-         * @brief 获取回调函数
-         */
-        const OnTickCallback& GetOnTickCallback()const noexcept { return m_stOnTickCallback; }
-
-        /**
-         * @brief 设置回调函数
-         * @param callback 回调函数
-         */
-        void SetOnTickCallback(OnTickCallback&& callback)noexcept { m_stOnTickCallback = std::move(callback); }
-        void SetOnTickCallback(const OnTickCallback& callback) { m_stOnTickCallback = callback; }
 
         /**
          * @brief 启动定时器
@@ -86,7 +76,7 @@ namespace UV
         CoCondVar m_stTickCondVar;
 
         // 回调
-        OnTickCallback m_stOnTickCallback;
+        CallbackType m_stCallback;
     };
 }
 }

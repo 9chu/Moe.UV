@@ -139,6 +139,13 @@ void RunLoop::UpdateTime()noexcept
 
 void RunLoop::OnPrepare()
 {
+    if (m_stPrepareCallback)
+    {
+        MOE_UV_EAT_EXCEPT_BEGIN
+            m_stPrepareCallback();
+        MOE_UV_EAT_EXCEPT_END
+    }
+
     // 计时器调度发生在OnPrepare之前
     // 因此在这里执行由计时器调度触发的协程
     m_stScheduler.Schedule();
@@ -146,6 +153,13 @@ void RunLoop::OnPrepare()
 
 void RunLoop::OnCheck()
 {
+    if (m_stCheckCallback)
+    {
+        MOE_UV_EAT_EXCEPT_BEGIN
+            m_stCheckCallback();
+        MOE_UV_EAT_EXCEPT_END
+    }
+
     // 句柄处理完成后执行OnCheck
     // 因此在这里执行由句柄事件调度触发的协程
     m_stScheduler.Schedule();

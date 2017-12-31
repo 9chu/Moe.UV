@@ -33,6 +33,8 @@ namespace UV
         friend class Filesystem;
 
     public:
+        using LoopCallbackType = std::function<void()>;
+
         /**
          * @brief 获取当前线程上的RunLoop
          */
@@ -65,6 +67,22 @@ namespace UV
         RunLoop& operator=(RunLoop&&) = delete;
 
     public:
+        /**
+         * @brief 获取或设置Prepare回调
+         *
+         * 这一回调被保证发生在协程调度之前。
+         */
+        LoopCallbackType GetPrepareCallback()const noexcept { return m_stPrepareCallback; }
+        void SetPrepareCallback(LoopCallbackType callback) { m_stPrepareCallback = callback; }
+
+        /**
+         * @brief 获取或者设置Check回调
+         *
+         * 这一回调被保证发生在协程调度之前。
+         */
+        LoopCallbackType GetCheckCallback()const noexcept { return m_stCheckCallback; }
+        void SetCheckCallback(LoopCallbackType callback) { m_stCheckCallback = callback; }
+
         /**
          * @brief 是否处于关闭状态
          */
@@ -102,6 +120,9 @@ namespace UV
 
         IoHandleHolder<PrepareHandle> m_stPrepareHandle;
         IoHandleHolder<CheckHandle> m_stCheckHandle;
+
+        LoopCallbackType m_stPrepareCallback;
+        LoopCallbackType m_stCheckCallback;
     };
 }
 }
