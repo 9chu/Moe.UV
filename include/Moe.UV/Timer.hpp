@@ -5,12 +5,17 @@
  */
 #pragma once
 #include "IoHandle.hpp"
-#include "Coroutine.hpp"
+#include "CoEvent.hpp"
 
 namespace moe
 {
 namespace UV
 {
+    /**
+     * @brief 定时器
+     *
+     * 提供一定时间间隔执行回调函数的功能。
+     */
     class Timer :
         public IoHandle
     {
@@ -19,6 +24,10 @@ namespace UV
     public:
         using CallbackType = std::function<void()>;
 
+        /**
+         * @brief 创建定时器
+         * @param interval 时间间隔
+         */
         static IoHandleHolder<Timer> Create(Time::Tick interval=100);
 
     private:
@@ -26,11 +35,14 @@ namespace UV
 
     protected:
         Timer();
-        ~Timer();
 
     public:
+        /**
+         * @brief 获取或设置定时器回调
+         */
         CallbackType GetCallback()const noexcept { return m_stCallback; }
-        void SetCallback(CallbackType callback) { m_stCallback = callback; }
+        void SetCallback(const CallbackType& callback) { m_stCallback = callback; }
+        void SetCallback(CallbackType&& callback)noexcept { m_stCallback = std::move(callback); }
 
         /**
          * @brief 获取时间间隔
@@ -46,21 +58,28 @@ namespace UV
 
         /**
          * @brief 启动定时器
+         * @return 如果句柄被关闭则返回false
          */
-        void Start();
+        bool Start()noexcept;
 
         /**
          * @brief 终止定时器
          */
-        bool Stop()noexcept;
+        void Stop()noexcept;
 
         /**
          * @brief （协程）等待计时触发
          * @return 是否主动取消
          *
          * 该方法只能在协程上执行。
+         * 只允许单个协程进行等待。
          */
         bool CoWait();
+
+        /**
+         * @brief 取消等待的协程
+         */
+        void CancelWait()noexcept;
 
     protected:
         void OnClose()noexcept override;
@@ -73,7 +92,7 @@ namespace UV
         Time::Tick m_ullInterval = 100;
 
         // 协程
-        CoCondVar m_stTickCondVar;
+        CoEvent m_stTickEvent;
 
         // 回调
         CallbackType m_stCallback;

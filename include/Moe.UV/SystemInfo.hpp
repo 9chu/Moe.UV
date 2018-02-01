@@ -70,7 +70,7 @@ namespace UV
          * @param[out] avg5 五分钟负载
          * @param[out] avg15 十五分钟负载
          *
-         * Windows下无效。
+         * Windows下无效，始终返回0。
          */
         static void GetLoadAverage(double& avg1, double& avg5, double& avg15)noexcept;
 

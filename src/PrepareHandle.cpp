@@ -16,10 +16,17 @@ IoHandleHolder<PrepareHandle> PrepareHandle::Create()
     return self;
 }
 
-IoHandleHolder<PrepareHandle> PrepareHandle::Create(CallbackType callback)
+IoHandleHolder<PrepareHandle> PrepareHandle::Create(const CallbackType& callback)
 {
     auto self = ObjectPool::Create<PrepareHandle>();
     self->SetCallback(callback);
+    return self;
+}
+
+IoHandleHolder<PrepareHandle> PrepareHandle::Create(CallbackType&& callback)
+{
+    auto self = ObjectPool::Create<PrepareHandle>();
+    self->SetCallback(std::move(callback));
     return self;
 }
 

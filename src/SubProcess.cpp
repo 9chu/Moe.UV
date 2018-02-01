@@ -50,20 +50,21 @@ void SubProcess::Kill(int signum)
     MOE_UV_CHECK(::uv_process_kill(&m_stHandle, signum));
 }
 
-bool SubProcess::CoWait()
+bool SubProcess::CoWait(Time::Tick timeout)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Handle is closing");
     if (!m_bRunning)
         return true;  // 已经退出
-    auto ret = Coroutine::Suspend(m_stExitCondVar);
-    return static_cast<bool>(ret);
+
+    auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
+    return m_stExitEvent.Wait(timeout) == CoEvent::WaitResult::Succeed;
 }
 
 void SubProcess::CancelWait()noexcept
 {
     // 通知协程取消
-    m_stExitCondVar.Resume(static_cast<ptrdiff_t>(false));
+    m_stExitEvent.Cancel();
 }
 
 void SubProcess::OnClose()noexcept
@@ -71,7 +72,7 @@ void SubProcess::OnClose()noexcept
     IoHandle::OnClose();
 
     // 通知协程取消
-    m_stExitCondVar.Resume(static_cast<ptrdiff_t>(false));
+    CancelWait();
 }
 
 void SubProcess::OnExit(int64_t exitStatus, int termSignal)noexcept
@@ -80,5 +81,12 @@ void SubProcess::OnExit(int64_t exitStatus, int termSignal)noexcept
     m_llExitStatus = exitStatus;
     m_iTermSignal = termSignal;
 
-    m_stExitCondVar.Resume(static_cast<ptrdiff_t>(true));
+    m_stExitEvent.Resume();
+
+    if (m_stCallback)
+    {
+        MOE_UV_EAT_EXCEPT_BEGIN
+            m_stCallback(exitStatus, termSignal);
+        MOE_UV_EAT_EXCEPT_END
+    }
 }

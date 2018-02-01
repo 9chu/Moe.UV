@@ -29,38 +29,44 @@ Timer::Timer()
     BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
 }
 
-Timer::~Timer()
-{
-    m_stTickCondVar.Resume(static_cast<ptrdiff_t>(false));
-}
-
-void Timer::Start()
-{
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Timer is already closed");
-    MOE_UV_CHECK(::uv_timer_start(&m_stHandle, OnUVTimer, m_ullInterval, m_ullInterval));
-}
-
-bool Timer::Stop()noexcept
+bool Timer::Start()noexcept
 {
     if (IsClosing())
         return false;
+
+    // 理论上不会抛出错误
+    int ret = ::uv_timer_start(&m_stHandle, OnUVTimer, m_ullInterval, m_ullInterval);
+    MOE_UNUSED(ret);
+    assert(ret == 0);
+    return true;
+}
+
+void Timer::Stop()noexcept
+{
+    if (IsClosing())
+        return;
+
+    // 理论上总是成功的
     auto ret = ::uv_timer_stop(&m_stHandle);
-    if (ret == 0)
-    {
-        // 通知协程取消
-        m_stTickCondVar.Resume(static_cast<ptrdiff_t>(false));
-        return true;
-    }
-    return false;
+    MOE_UNUSED(ret);
+    assert(ret == 0);
+
+    // 通知协程取消
+    CancelWait();
 }
 
 bool Timer::CoWait()
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Timer is already closed");
-    auto ret = Coroutine::Suspend(m_stTickCondVar);
-    return static_cast<bool>(ret);
+
+    auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
+    return m_stTickEvent.Wait() == CoEvent::WaitResult::Succeed;
+}
+
+void Timer::CancelWait()noexcept
+{
+    m_stTickEvent.Cancel();
 }
 
 void Timer::OnClose()noexcept
@@ -68,12 +74,12 @@ void Timer::OnClose()noexcept
     IoHandle::OnClose();
 
     // 通知协程取消
-    m_stTickCondVar.Resume(static_cast<ptrdiff_t>(false));
+    CancelWait();
 }
 
 void Timer::OnTick()noexcept
 {
-    m_stTickCondVar.Resume(static_cast<ptrdiff_t>(true));
+    m_stTickEvent.Resume();
 
     if (m_stCallback)
     {

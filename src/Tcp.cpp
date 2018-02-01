@@ -5,9 +5,12 @@
  */
 #include <Moe.UV/Tcp.hpp>
 
+#include <Moe.Coroutine/Coroutine.hpp>
+
 using namespace std;
 using namespace moe;
 using namespace UV;
+using namespace Coroutine;
 
 //////////////////////////////////////////////////////////////////////////////// TcpSocket
 
@@ -19,7 +22,7 @@ namespace
         RefPtr<TcpSocket> Self;
         ::uv_connect_t Request;
 
-        CoCondVar CondVar;
+        CoEvent Event;
     };
 
     struct ShutdownRequest :
@@ -28,7 +31,7 @@ namespace
         RefPtr<TcpSocket> Self;
         ::uv_shutdown_t Request;
 
-        CoCondVar CondVar;
+        CoEvent Event;
     };
 
     struct WriteRequest :
@@ -40,7 +43,7 @@ namespace
         ::uv_buf_t BufferDesc;
         ObjectPool::BufferPtr Buffer;
 
-        CoCondVar CondVar;
+        CoEvent Event;
     };
 }
 
@@ -64,13 +67,13 @@ void TcpSocket::OnUVConnect(::uv_connect_t* req, int status)noexcept
         }
         catch (...)
         {
-            holder->CondVar.ResumeException(current_exception());
+            holder->Event.Throw(current_exception());
         }
     }
     else
     {
         // 恢复Coroutine
-        holder->CondVar.Resume();
+        holder->Event.Resume();
     }
 }
 
@@ -88,13 +91,13 @@ void TcpSocket::OnUVShutdown(::uv_shutdown_t* req, int status)noexcept
         }
         catch (...)
         {
-            holder->CondVar.ResumeException(current_exception());
+            holder->Event.Throw(current_exception());
         }
     }
     else
     {
         // 恢复Coroutine
-        holder->CondVar.Resume();
+        holder->Event.Resume();
     }
 }
 
@@ -115,7 +118,7 @@ void TcpSocket::OnUVWrite(::uv_write_t* req, int status)noexcept
         }
         catch (...)
         {
-            holder->CondVar.ResumeException(current_exception());
+            holder->Event.Throw(current_exception());
         }
     }
     else
@@ -124,7 +127,7 @@ void TcpSocket::OnUVWrite(::uv_write_t* req, int status)noexcept
         self->OnSend(holder->BufferDesc.len);
 
         // 恢复Coroutine
-        holder->CondVar.Resume();
+        holder->Event.Resume();
     }
 }
 
@@ -248,6 +251,8 @@ void TcpSocket::CoConnect(const EndPoint& address)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto request = ObjectPool::Create<ConnectRequest>();
     request->Self = RefFromThis().CastTo<TcpSocket>();
@@ -260,7 +265,7 @@ void TcpSocket::CoConnect(const EndPoint& address)
     request->Request.data = RefPtr<ConnectRequest>(request).Release();
 
     // 发起等待操作
-    Coroutine::Suspend(request->CondVar);
+    request->Event.Wait();
 }
 
 bool TcpSocket::IsReadable()const noexcept
@@ -283,6 +288,8 @@ void TcpSocket::CoShutdown()
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto request = ObjectPool::Create<ShutdownRequest>();
     request->Self = RefFromThis().CastTo<TcpSocket>();
@@ -294,7 +301,7 @@ void TcpSocket::CoShutdown()
     request->Request.data = RefPtr<ShutdownRequest>(request).Release();
 
     // 发起等待操作
-    Coroutine::Suspend(request->CondVar);
+    request->Event.Wait();
 }
 
 void TcpSocket::Send(BytesView buffer)
@@ -333,6 +340,8 @@ void TcpSocket::CoSend(BytesView buffer)
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
     if (buffer.GetSize() == 0)
         return;
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto request = ObjectPool::Create<WriteRequest>();
     request->Self = RefFromThis().CastTo<TcpSocket>();
@@ -349,10 +358,10 @@ void TcpSocket::CoSend(BytesView buffer)
     request->Request.data = RefPtr<WriteRequest>(request).Release();
 
     // 发起等待操作
-    Coroutine::Suspend(request->CondVar);
+    request->Event.Wait();
 }
 
-bool TcpSocket::CoRead(ObjectPool::BufferPtr& holder, MutableBytesView& view)
+bool TcpSocket::CoRead(ObjectPool::BufferPtr& holder, MutableBytesView& view, Time::Tick timeout)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
@@ -375,8 +384,9 @@ bool TcpSocket::CoRead(ObjectPool::BufferPtr& holder, MutableBytesView& view)
     }
 
     // 如果缓冲区无数据，则等待
-    bool ret = static_cast<bool>(Coroutine::Suspend(m_stReadCondVar));
-    if (ret)
+    auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
+    auto ret = m_stReadEvent.Wait(timeout);
+    if (ret == CoEvent::WaitResult::Succeed)
     {
         // 此时缓冲区必然有数据
         assert(!m_stQueuedBuffer.IsEmpty());
@@ -388,7 +398,7 @@ bool TcpSocket::CoRead(ObjectPool::BufferPtr& holder, MutableBytesView& view)
     return false;
 }
 
-bool TcpSocket::CoRead(uint8_t* target, size_t count)
+bool TcpSocket::CoRead(uint8_t* target, size_t count, Time::Tick timeout)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
@@ -429,8 +439,9 @@ bool TcpSocket::CoRead(uint8_t* target, size_t count)
         }
 
         // 此时，需要后续数据，阻塞等待
-        bool ret = static_cast<bool>(Coroutine::Suspend(m_stReadCondVar));
-        if (!ret)
+        auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
+        auto ret = m_stReadEvent.Wait();
+        if (ret != CoEvent::WaitResult::Succeed)
             return false;  // 操作取消
     }
     return true;
@@ -444,7 +455,7 @@ bool TcpSocket::CancelRead()noexcept
     if (ret == 0)
     {
         // TCP版本不会清空缓冲区，只通知句柄退出
-        m_stReadCondVar.Resume(static_cast<ptrdiff_t>(false));
+        m_stReadEvent.Cancel();
 
         m_bReading = false;
         return true;
@@ -473,7 +484,7 @@ void TcpSocket::OnError(int error)noexcept
     }
     catch (...)
     {
-        m_stReadCondVar.ResumeException(current_exception());
+        m_stReadEvent.Throw(current_exception());
     }
 }
 
@@ -506,7 +517,7 @@ void TcpSocket::OnRead(ObjectPool::BufferPtr buffer, size_t len)noexcept
     }
 
     // 激活协程
-    m_stReadCondVar.ResumeOne(static_cast<ptrdiff_t>(true));
+    m_stReadEvent.Resume();
 }
 
 void TcpSocket::OnEof()noexcept
@@ -514,7 +525,7 @@ void TcpSocket::OnEof()noexcept
     m_bReading = false;
 
     // 终止读句柄
-    m_stReadCondVar.Resume(static_cast<ptrdiff_t>(false));
+    m_stReadEvent.Cancel();
 }
 
 //////////////////////////////////////////////////////////////////////////////// TcpListener
@@ -586,7 +597,7 @@ void TcpListener::Listen(int backlog)
     MOE_UV_CHECK(::uv_listen(reinterpret_cast<::uv_stream_t*>(&m_stHandle), backlog, OnUVNewConnection));
 }
 
-IoHandleHolder<TcpSocket> TcpListener::CoAccept()
+IoHandleHolder<TcpSocket> TcpListener::CoAccept(Time::Tick timeout)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
@@ -604,16 +615,26 @@ IoHandleHolder<TcpSocket> TcpListener::CoAccept()
             MOE_UV_THROW(ret);
 
         // 等待协程
-        Coroutine::Suspend(m_stAcceptCondVar);
+        auto ret = m_stAcceptEvent.Wait(timeout);
+        if (ret != CoEvent::WaitResult::Succeed)
+            return IoHandleHolder<TcpSocket>();
     }
 
     assert(false);
     return IoHandleHolder<TcpSocket>();
 }
 
+void TcpListener::CancelWait()noexcept
+{
+    m_stAcceptEvent.Cancel();
+}
+
 void TcpListener::OnClose()noexcept
 {
     IoHandle::Close();
+
+    // 取消等待的协程
+    CancelWait();
 }
 
 void TcpListener::OnError(int error)noexcept
@@ -631,11 +652,11 @@ void TcpListener::OnError(int error)noexcept
     }
     catch (...)
     {
-        m_stAcceptCondVar.ResumeException(current_exception());
+        m_stAcceptEvent.Throw(current_exception());
     }
 }
 
 void TcpListener::OnNewConnection()noexcept
 {
-    m_stAcceptCondVar.ResumeOne();
+    m_stAcceptEvent.Resume();
 }

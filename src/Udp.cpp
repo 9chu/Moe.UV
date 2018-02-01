@@ -5,9 +5,12 @@
  */
 #include <Moe.UV/Udp.hpp>
 
+#include <Moe.Coroutine/Coroutine.hpp>
+
 using namespace std;
 using namespace moe;
 using namespace UV;
+using namespace Coroutine;
 
 namespace
 {
@@ -17,10 +20,10 @@ namespace
         RefPtr<UdpSocket> Self;
         ::uv_udp_send_t Request;
 
+        CoEvent Event;
+
         ::uv_buf_t BufferDesc;
         ObjectPool::BufferPtr Buffer;
-
-        CoCondVar CondVar;
     };
 }
 
@@ -54,7 +57,7 @@ void UdpSocket::OnUVSend(::uv_udp_send_t* request, int status)noexcept
         }
         catch (...)
         {
-            holder->CondVar.ResumeException(current_exception());
+            holder->Event.Throw(current_exception());
         }
     }
     else
@@ -63,7 +66,7 @@ void UdpSocket::OnUVSend(::uv_udp_send_t* request, int status)noexcept
         self->OnSend(holder->BufferDesc.len);
 
         // 恢复Coroutine
-        holder->CondVar.Resume();
+        holder->Event.Resume();
     }
 }
 
@@ -202,6 +205,8 @@ void UdpSocket::CoSend(const EndPoint& address, BytesView buffer)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
     if (buffer.GetSize() == 0)
         return;
 
@@ -220,13 +225,15 @@ void UdpSocket::CoSend(const EndPoint& address, BytesView buffer)
     request->Request.data = RefPtr<SendRequest>(request).Release();
 
     // 发起等待操作
-    Coroutine::Suspend(request->CondVar);
+    request->Event.Wait();
 }
 
-bool UdpSocket::CoRead(EndPoint& remote, ObjectPool::BufferPtr& buffer, size_t& size)
+bool UdpSocket::CoRead(EndPoint& remote, ObjectPool::BufferPtr& buffer, size_t& size, Time::Tick timeout)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
 
     // 如果没有在读，则发起读操作
     if (!m_bReading)
@@ -247,8 +254,9 @@ bool UdpSocket::CoRead(EndPoint& remote, ObjectPool::BufferPtr& buffer, size_t& 
     }
 
     // 如果缓冲区无数据，则等待
-    bool ret = static_cast<bool>(Coroutine::Suspend(m_stReadCondVar));
-    if (ret)
+    auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
+    auto ret = m_stReadEvent.Wait(timeout);
+    if (ret == CoEvent::WaitResult::Succeed)
     {
         // 此时缓冲区必然有数据
         assert(!m_stQueuedBuffer.IsEmpty());
@@ -272,7 +280,7 @@ bool UdpSocket::CancelRead()noexcept
         m_stQueuedBuffer.Clear();
 
         // 通知句柄退出
-        m_stReadCondVar.Resume(static_cast<ptrdiff_t>(false));
+        m_stReadEvent.Cancel();
 
         m_bReading = false;
         return true;
@@ -284,6 +292,9 @@ void UdpSocket::OnClose()noexcept
 {
     IoHandle::Close();
     m_bReading = false;
+
+    // 通知句柄退出
+    m_stReadEvent.Cancel();
 }
 
 void UdpSocket::OnError(int error)noexcept
@@ -301,7 +312,7 @@ void UdpSocket::OnError(int error)noexcept
     }
     catch (...)
     {
-        m_stReadCondVar.ResumeException(current_exception());
+        m_stReadEvent.Throw(current_exception());
     }
 }
 
@@ -335,5 +346,5 @@ void UdpSocket::OnRead(const EndPoint& remote, ObjectPool::BufferPtr buffer, siz
     }
 
     // 激活协程
-    m_stReadCondVar.ResumeOne(static_cast<ptrdiff_t>(true));
+    m_stReadEvent.Resume();
 }

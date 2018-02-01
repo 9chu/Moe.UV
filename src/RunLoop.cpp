@@ -50,8 +50,8 @@ void RunLoop::UVClosingHandleWalker(::uv_handle_t* handle, void* arg)noexcept
     }
 }
 
-RunLoop::RunLoop(size_t coroutineSharedStackSize)
-    : m_stScheduler(coroutineSharedStackSize)
+RunLoop::RunLoop(Time::Tick minimalTick, size_t coroutineSharedStackSize)
+    : m_stScheduler(m_stObjectPool.GetPool(), 0, coroutineSharedStackSize), m_uMinimalTick(minimalTick)
 {
     if (t_pRunLoop)
         MOE_THROW(InvalidCallException, "RunLoop is already existed");
@@ -65,6 +65,7 @@ RunLoop::RunLoop(size_t coroutineSharedStackSize)
     {
         m_stPrepareHandle = PrepareHandle::Create(std::bind(&RunLoop::OnPrepare, this));
         m_stCheckHandle = CheckHandle::Create(std::bind(&RunLoop::OnCheck, this));
+        m_stSchedulerTimeout = Timeout::Create();
 
         // 后台对象
         m_stPrepareHandle->Unref();
@@ -73,14 +74,18 @@ RunLoop::RunLoop(size_t coroutineSharedStackSize)
     catch (...)
     {
         // 删除句柄
-        m_stPrepareHandle.Clear();
+        m_stSchedulerTimeout.Clear();
         m_stCheckHandle.Clear();
+        m_stPrepareHandle.Clear();
 
         t_pRunLoop = nullptr;
 
         MOE_UV_CHECK(::uv_loop_close(&m_stLoop));
         throw;
     }
+
+    // 刷新调度器时间
+    m_stScheduler.Update(::uv_now(&m_stLoop));
 }
 
 RunLoop::~RunLoop()
@@ -88,8 +93,9 @@ RunLoop::~RunLoop()
     m_bClosing = true;
 
     // 删除句柄
-    m_stPrepareHandle.Clear();
+    m_stSchedulerTimeout.Clear();
     m_stCheckHandle.Clear();
+    m_stPrepareHandle.Clear();
 
     // 等待所有句柄和请求结束
     while (::uv_loop_alive(&m_stLoop) != 0 || !m_stScheduler.IsIdle())
@@ -97,9 +103,12 @@ RunLoop::~RunLoop()
         ::uv_walk(&m_stLoop, UVClosingHandleWalker, nullptr);
         ::uv_run(&m_stLoop, UV_RUN_NOWAIT);  // 执行Close回调
 
-        m_stScheduler.Schedule();
+        m_stScheduler.Update(::uv_now(&m_stLoop));
 
-        this_thread::sleep_for(chrono::milliseconds(5));
+        if (m_uMinimalTick)
+            this_thread::sleep_for(chrono::milliseconds(m_uMinimalTick));
+        else
+            this_thread::sleep_for(chrono::milliseconds(10));
     }
 
     // 关闭Loop句柄
@@ -113,7 +122,7 @@ RunLoop::~RunLoop()
 void RunLoop::Run()
 {
     // 先执行一次协程调度，防止在uv_run之前对象还没创建出来就退出了循环
-    m_stScheduler.Schedule();
+    m_stScheduler.Update(::uv_now(&m_stLoop));
 
     // 启动句柄
     m_stPrepareHandle->Start();
@@ -148,19 +157,30 @@ void RunLoop::OnPrepare()
 
     // 计时器调度发生在OnPrepare之前
     // 因此在这里执行由计时器调度触发的协程
-    m_stScheduler.Schedule();
+    auto sleep = m_stScheduler.Update(::uv_now(&m_stLoop));
+    m_stScheduler.IsEmpty() ? m_stSchedulerTimeout->Unref() : m_stSchedulerTimeout->Ref();
+    if (sleep == Coroutine::kInfinityTimeout)
+        m_stSchedulerTimeout->Stop();
+    else
+    {
+        if (sleep < m_uMinimalTick)
+            sleep = m_uMinimalTick;
+        auto ret = m_stSchedulerTimeout->Start(sleep);
+        MOE_UNUSED(ret);
+        assert(ret);
+    }
 }
 
 void RunLoop::OnCheck()
 {
+    // 句柄处理完成后执行OnCheck
+    // 因此在这里执行由句柄事件调度触发的协程
+    m_stScheduler.Update(::uv_now(&m_stLoop));
+
     if (m_stCheckCallback)
     {
         MOE_UV_EAT_EXCEPT_BEGIN
             m_stCheckCallback();
         MOE_UV_EAT_EXCEPT_END
     }
-
-    // 句柄处理完成后执行OnCheck
-    // 因此在这里执行由句柄事件调度触发的协程
-    m_stScheduler.Schedule();
 }

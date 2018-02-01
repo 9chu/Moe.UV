@@ -23,8 +23,13 @@ namespace UV
     public:
         using CallbackType = std::function<void()>;
 
+        /**
+         * @brief 创建检查句柄
+         * @param callback 句柄触发回调函数
+         */
         static IoHandleHolder<CheckHandle> Create();
-        static IoHandleHolder<CheckHandle> Create(CallbackType callback);
+        static IoHandleHolder<CheckHandle> Create(const CallbackType& callback);
+        static IoHandleHolder<CheckHandle> Create(CallbackType&& callback);
 
     private:
         static void OnUVCheck(uv_check_t* handle)noexcept;
@@ -33,8 +38,12 @@ namespace UV
         CheckHandle();
 
     public:
+        /**
+         * @brief 获取或设置回调函数
+         */
         CallbackType GetCallback()const noexcept { return m_stCallback; }
-        void SetCallback(CallbackType callback) { m_stCallback = callback; }
+        void SetCallback(const CallbackType& callback) { m_stCallback = callback; }
+        void SetCallback(CallbackType&& callback)noexcept { m_stCallback = std::move(callback); }
 
         /**
          * @brief 启动Check句柄

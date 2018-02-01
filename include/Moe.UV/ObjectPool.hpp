@@ -44,7 +44,7 @@ namespace UV
     /**
      * @brief 对象池
      *
-     * 用于小对象的分配和释放。
+     * 对FixedBufferPool的包装，使之变成线程上的分配池，并用于小对象的分配和释放。
      */
     class ObjectPool :
         public NonCopyable
@@ -112,6 +112,8 @@ namespace UV
         ObjectPool& operator=(ObjectPool&&) = delete;
 
     public:
+        FixedBufferPool& GetPool()noexcept { return m_stPool; }
+
         size_t GetTotalBufferSize()noexcept { return m_stPool.GetTotalBufferSize(); }
         size_t GetTotalFreeSize()noexcept { return m_stPool.GetTotalFreeSize(); }
         size_t GetTotalUsedSize()noexcept { return m_stPool.GetTotalUsedSize(); }

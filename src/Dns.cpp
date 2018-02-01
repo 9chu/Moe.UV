@@ -6,9 +6,14 @@
 #include <Moe.UV/Dns.hpp>
 #include <Moe.UV/RunLoop.hpp>
 
+#include <Moe.Coroutine/Event.hpp>
+#include <Moe.Coroutine/Coroutine.hpp>
+#include <Moe.Coroutine/Scheduler.hpp>
+
 using namespace std;
 using namespace moe;
 using namespace UV;
+using namespace Coroutine;
 
 namespace
 {
@@ -16,7 +21,10 @@ namespace
         public ObjectPool::RefBase<UVGetAddrInfoReq>
     {
         ::uv_getaddrinfo_t Request;
-        CoCondVar CondVar;
+
+        RefPtr<Event> Event;
+        exception_ptr Exception;
+
         vector<EndPoint> Result;
 
         static void Callback(::uv_getaddrinfo_t* req, int status, ::addrinfo* res)
@@ -33,7 +41,8 @@ namespace
                 {
                     if (res)
                         ::uv_freeaddrinfo(res);
-                    self->CondVar.ResumeException(std::current_exception());
+                    self->Exception = std::current_exception();
+                    self->Event->SetEvent();
                     return;
                 }
             }
@@ -72,14 +81,15 @@ namespace
                 }
 
                 // 恢复协程
-                self->CondVar.Resume();
+                self->Event->SetEvent();
             }
             catch (...)
             {
                 self->Result.clear();
 
                 // bad_alloc
-                self->CondVar.ResumeException(std::current_exception());
+                self->Exception = std::current_exception();
+                self->Event->SetEvent();
             }
 
             if (res)
@@ -91,7 +101,10 @@ namespace
         public ObjectPool::RefBase<UVGetNameInfoReq>
     {
         ::uv_getnameinfo_t Request;
-        CoCondVar CondVar;
+
+        RefPtr<Event> Event;
+        exception_ptr Exception;
+
         string Hostname;
         string Service;
 
@@ -107,7 +120,8 @@ namespace
                 }
                 catch (...)
                 {
-                    self->CondVar.ResumeException(std::current_exception());
+                    self->Exception = std::current_exception();
+                    self->Event->SetEvent();
                     return;
                 }
             }
@@ -118,12 +132,13 @@ namespace
                 self->Service = service;
 
                 // 恢复协程
-                self->CondVar.Resume();
+                self->Event->SetEvent();
             }
             catch (...)
             {
                 // bad_alloc
-                self->CondVar.ResumeException(std::current_exception());
+                self->Exception = std::current_exception();
+                self->Event->SetEvent();
             }
         }
     };
@@ -131,10 +146,14 @@ namespace
 
 EndPoint Dns::CoResolve(const char* hostname)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVGetAddrInfoReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &req->Request, UVGetAddrInfoReq::Callback, hostname,
         nullptr, nullptr));
 
@@ -143,7 +162,11 @@ EndPoint Dns::CoResolve(const char* hostname)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
+    if (req->Exception)
+        rethrow_exception(req->Exception);
 
     if (req->Result.size() > 0)
         return req->Result[0];
@@ -153,10 +176,14 @@ EndPoint Dns::CoResolve(const char* hostname)
 
 void Dns::CoResolve(std::vector<EndPoint>& out, const char* hostname)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVGetAddrInfoReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &req->Request, UVGetAddrInfoReq::Callback, hostname,
         nullptr, nullptr));
 
@@ -165,7 +192,11 @@ void Dns::CoResolve(std::vector<EndPoint>& out, const char* hostname)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
+    if (req->Exception)
+        rethrow_exception(req->Exception);
 
     // 如果没有错误就移动结果
     out = std::move(req->Result);
@@ -173,10 +204,14 @@ void Dns::CoResolve(std::vector<EndPoint>& out, const char* hostname)
 
 void Dns::CoReverse(const EndPoint& address, std::string& hostname)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVGetNameInfoReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_getnameinfo(RunLoop::GetCurrentUVLoop(), &req->Request, UVGetNameInfoReq::Callback,
         reinterpret_cast<const ::sockaddr*>(&address.Storage), 0));
 
@@ -185,7 +220,11 @@ void Dns::CoReverse(const EndPoint& address, std::string& hostname)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
+    if (req->Exception)
+        rethrow_exception(req->Exception);
 
     // 如果没有错误就移动结果
     hostname = std::move(req->Hostname);
@@ -193,10 +232,14 @@ void Dns::CoReverse(const EndPoint& address, std::string& hostname)
 
 void Dns::CoReverse(const EndPoint& address, std::string& hostname, std::string& service)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVGetNameInfoReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_getnameinfo(RunLoop::GetCurrentUVLoop(), &req->Request, UVGetNameInfoReq::Callback,
         reinterpret_cast<const ::sockaddr*>(&address.Storage), 0));
 
@@ -205,7 +248,11 @@ void Dns::CoReverse(const EndPoint& address, std::string& hostname, std::string&
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
+    if (req->Exception)
+        rethrow_exception(req->Exception);
 
     // 如果没有错误就移动结果
     hostname = std::move(req->Hostname);

@@ -5,7 +5,7 @@
  */
 #pragma once
 #include "IoHandle.hpp"
-#include "Coroutine.hpp"
+#include "CoEvent.hpp"
 
 namespace moe
 {
@@ -34,8 +34,12 @@ namespace UV
         Signal();
 
     public:
+        /**
+         * @brief 获取或设置信号触发回调函数
+         */
         CallbackType GetCallback()const noexcept { return m_stCallback; }
-        void SetCallback(CallbackType callback) { m_stCallback = callback; }
+        void SetCallback(const CallbackType& callback) { m_stCallback = callback; }
+        void SetCallback(CallbackType&& callback)noexcept { m_stCallback = std::move(callback); }
 
         /**
          * @brief 启动信号
@@ -49,11 +53,18 @@ namespace UV
 
         /**
          * @brief （协程）等待信号触发
-         * @return 是否主动取消，true指示事件触发
+         * @param timeout 超时时间
+         * @return 事件是否触发，若超时或者取消均会返回false
          *
          * 该方法只能在协程上执行。
+         * 只允许单个协程进行等待。
          */
-        bool CoWait();
+        bool CoWait(Time::Tick timeout=Coroutine::kInfinityTimeout);
+
+        /**
+         * @brief 取消协程等待
+         */
+        void CancelWait()noexcept;
 
     protected:
         void OnClose()noexcept override;
@@ -65,7 +76,7 @@ namespace UV
         int m_iWatchedSignum = 0;
 
         // 协程
-        CoCondVar m_stSignalCondVar;  // 等待信号的协程
+        CoEvent m_stSignalEvent;  // 信号事件
 
         // 回调
         CallbackType m_stCallback;

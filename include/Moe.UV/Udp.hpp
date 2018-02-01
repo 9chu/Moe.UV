@@ -8,7 +8,7 @@
 
 #include "IoHandle.hpp"
 #include "EndPoint.hpp"
-#include "Coroutine.hpp"
+#include "CoEvent.hpp"
 
 namespace moe
 {
@@ -23,6 +23,12 @@ namespace UV
         friend class ObjectPool;
 
     public:
+        /**
+         * @brief 构造UDP套接字
+         * @param bind 绑定端口
+         * @param reuse 是否复用
+         * @param ipv6Only 是否仅绑定IPV6地址
+         */
         static IoHandleHolder<UdpSocket> Create();
         static IoHandleHolder<UdpSocket> Create(const EndPoint& bind, bool reuse=true, bool ipv6Only=false);
 
@@ -80,6 +86,7 @@ namespace UV
          * @param buffer 数据（无拷贝）
          *
          * 如果尚未绑定端口，则会绑定到0.0.0.0和随机端口上。
+         * 仅允许单个协程调用。
          *
          * 注意：
          * - 协程版本buffer中的数据不会被拷贝
@@ -92,16 +99,19 @@ namespace UV
          * @param[out] remote 远端地址
          * @param[out] buffer 数据缓冲区
          * @param[out] size 数据大小
-         * @return 是否收到数据，若为false表示操作被取消
+         * @param timeout 超时时间
+         * @return 是否收到数据，若为false表示操作被取消或者超时
          *
          * 如果尚未绑定端口，则会绑定到0.0.0.0和随机端口上。
+         * 仅允许单个协程调用。
          */
-        bool CoRead(EndPoint& remote, ObjectPool::BufferPtr& buffer, size_t& size);
+        bool CoRead(EndPoint& remote, ObjectPool::BufferPtr& buffer, size_t& size,
+            Time::Tick timeout=Coroutine::kInfinityTimeout);
 
         /**
          * @brief 立即终止读操作
          *
-         * 立即终止读操作，激活所有协程并且抛弃缓冲的数据包。
+         * 立即终止读操作，激活等待的协程并且抛弃缓冲的数据包。
          * 如果使用Close而不是CancelRead将会引发OperationCancelledException。
          */
         bool CancelRead()noexcept;
@@ -119,7 +129,7 @@ namespace UV
         CircularQueue<QueueData, 8> m_stQueuedBuffer;  // 缓存的缓冲区
 
         // 协程
-        CoCondVar m_stReadCondVar;  // 等待读的协程
+        CoEvent m_stReadEvent;  // 等待读的协程
     };
 }
 }

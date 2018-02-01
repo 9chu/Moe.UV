@@ -5,7 +5,6 @@
  */
 #pragma once
 #include "IoHandle.hpp"
-#include "Coroutine.hpp"
 
 namespace moe
 {

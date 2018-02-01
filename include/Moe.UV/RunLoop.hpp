@@ -5,13 +5,14 @@
  */
 #pragma once
 #include "ObjectPool.hpp"
-#include "Coroutine.hpp"
 #include "IoHandle.hpp"
 #include "PrepareHandle.hpp"
 #include "CheckHandle.hpp"
+#include "Timeout.hpp"
 
 #include <Moe.Core/Time.hpp>
 #include <Moe.Core/Utils.hpp>
+#include <Moe.Coroutine/Scheduler.hpp>
 
 namespace moe
 {
@@ -33,7 +34,7 @@ namespace UV
         friend class Filesystem;
 
     public:
-        using LoopCallbackType = std::function<void()>;
+        using CallbackType = std::function<void()>;
 
         /**
          * @brief 获取当前线程上的RunLoop
@@ -57,9 +58,10 @@ namespace UV
     public:
         /**
          * @brief 构造消息循环
+         * @param minimalTick 最小时间片
          * @param coroutineSharedStackSize 协程的共享栈大小
          */
-        RunLoop(size_t coroutineSharedStackSize=4*1024*1024);
+        RunLoop(Time::Tick minimalTick=0, size_t coroutineSharedStackSize=4*1024*1024);
 
         ~RunLoop();
 
@@ -72,16 +74,18 @@ namespace UV
          *
          * 这一回调被保证发生在协程调度之前。
          */
-        LoopCallbackType GetPrepareCallback()const noexcept { return m_stPrepareCallback; }
-        void SetPrepareCallback(LoopCallbackType callback) { m_stPrepareCallback = callback; }
+        CallbackType GetPrepareCallback()const noexcept { return m_stPrepareCallback; }
+        void SetPrepareCallback(const CallbackType& callback) { m_stPrepareCallback = callback; }
+        void SetPrepareCallback(CallbackType&& callback)noexcept { m_stPrepareCallback = std::move(callback); }
 
         /**
          * @brief 获取或者设置Check回调
          *
-         * 这一回调被保证发生在协程调度之前。
+         * 这一回调被保证发生在协程调度之后。
          */
-        LoopCallbackType GetCheckCallback()const noexcept { return m_stCheckCallback; }
-        void SetCheckCallback(LoopCallbackType callback) { m_stCheckCallback = callback; }
+        CallbackType GetCheckCallback()const noexcept { return m_stCheckCallback; }
+        void SetCheckCallback(const CallbackType& callback) { m_stCheckCallback = callback; }
+        void SetCheckCallback(CallbackType&& callback) { m_stCheckCallback = std::move(callback); }
 
         /**
          * @brief 是否处于关闭状态
@@ -113,16 +117,18 @@ namespace UV
 
     private:
         ObjectPool m_stObjectPool;
-        Scheduler m_stScheduler;
+        Coroutine::Scheduler m_stScheduler;
 
         bool m_bClosing = false;
+        Time::Tick m_uMinimalTick = 0;
         ::uv_loop_t m_stLoop;
 
         IoHandleHolder<PrepareHandle> m_stPrepareHandle;
         IoHandleHolder<CheckHandle> m_stCheckHandle;
+        IoHandleHolder<Timeout> m_stSchedulerTimeout;
 
-        LoopCallbackType m_stPrepareCallback;
-        LoopCallbackType m_stCheckCallback;
+        CallbackType m_stPrepareCallback;
+        CallbackType m_stCheckCallback;
     };
 }
 }

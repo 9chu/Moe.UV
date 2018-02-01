@@ -42,18 +42,25 @@ bool Signal::Stop()noexcept
     if (ret == 0)
     {
         // 通知协程取消
-        m_stSignalCondVar.Resume(static_cast<ptrdiff_t>(false));
+        CancelWait();
         return true;
     }
     return false;
 }
 
-bool Signal::CoWait()
+bool Signal::CoWait(Time::Tick timeout)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Signal is already closed");
-    auto ret = Coroutine::Suspend(m_stSignalCondVar);
-    return static_cast<bool>(ret);
+    
+    auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
+    return m_stSignalEvent.Wait(timeout) == CoEvent::WaitResult::Succeed;
+}
+
+void Signal::CancelWait()noexcept
+{
+    // 通知协程取消
+    m_stSignalEvent.Cancel();
 }
 
 void Signal::OnClose()noexcept
@@ -61,13 +68,13 @@ void Signal::OnClose()noexcept
     IoHandle::OnClose();
 
     // 通知协程取消
-    m_stSignalCondVar.Resume(static_cast<ptrdiff_t>(false));
+    CancelWait();
 }
 
 void Signal::OnSignal(int signum)noexcept
 {
     if (m_iWatchedSignum == signum)
-        m_stSignalCondVar.Resume(static_cast<ptrdiff_t>(true));
+        m_stSignalEvent.Resume();
 
     if (m_stCallback)
     {

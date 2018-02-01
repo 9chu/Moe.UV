@@ -16,10 +16,17 @@ IoHandleHolder<CheckHandle> CheckHandle::Create()
     return self;
 }
 
-IoHandleHolder<CheckHandle> CheckHandle::Create(CallbackType callback)
+IoHandleHolder<CheckHandle> CheckHandle::Create(const CallbackType& callback)
 {
     auto self = ObjectPool::Create<CheckHandle>();
     self->SetCallback(callback);
+    return self;
+}
+
+IoHandleHolder<CheckHandle> CheckHandle::Create(CallbackType&& callback)
+{
+    auto self = ObjectPool::Create<CheckHandle>();
+    self->SetCallback(std::move(callback));
     return self;
 }
 

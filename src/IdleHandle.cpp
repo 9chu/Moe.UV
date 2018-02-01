@@ -16,10 +16,17 @@ IoHandleHolder<IdleHandle> IdleHandle::Create()
     return self;
 }
 
-IoHandleHolder<IdleHandle> IdleHandle::Create(CallbackType callback)
+IoHandleHolder<IdleHandle> IdleHandle::Create(const CallbackType& callback)
 {
     auto self = ObjectPool::Create<IdleHandle>();
     self->SetCallback(callback);
+    return self;
+}
+
+IoHandleHolder<IdleHandle> IdleHandle::Create(CallbackType&& callback)
+{
+    auto self = ObjectPool::Create<IdleHandle>();
+    self->SetCallback(std::move(callback));
     return self;
 }
 

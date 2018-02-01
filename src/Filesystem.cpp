@@ -5,7 +5,11 @@
  */
 #include <Moe.UV/Filesystem.hpp>
 #include <Moe.UV/RunLoop.hpp>
+
 #include <Moe.Core/Utils.hpp>
+#include <Moe.Coroutine/Event.hpp>
+#include <Moe.Coroutine/Coroutine.hpp>
+#include <Moe.Coroutine/Scheduler.hpp>
 
 #ifdef MOE_WINDOWS
 #include <io.h>
@@ -34,6 +38,7 @@
 using namespace std;
 using namespace moe;
 using namespace UV;
+using namespace Coroutine;
 
 namespace
 {
@@ -41,7 +46,7 @@ namespace
         public ObjectPool::RefBase<UVFileSysReq>
     {
         ::uv_fs_t Request;
-        CoCondVar CondVar;
+        RefPtr<Event> Event;
 
         UVFileSysReq()
         {
@@ -58,7 +63,7 @@ namespace
             RefPtr<UVFileSysReq> self(static_cast<UVFileSysReq*>(req->data));
 
             // 恢复协程
-            self->CondVar.Resume();
+            self->Event->SetEvent();
         }
     };
 
@@ -124,15 +129,20 @@ File& File::operator=(File&& rhs)noexcept
 
 size_t File::CoRead(MutableBytesView buffer, uint64_t offset)
 {
-    assert(offset <= std::numeric_limits<int64_t>::max());
+    assert(offset <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
     if (m_iFd == 0)
         MOE_THROW(InvalidCallException, "No file opened");
-    if (!Coroutine::InCoroutineContext())
-        MOE_THROW(InvalidCallException, "Bad execution context");
     if (buffer.GetSize() == 0)
         return 0;
 
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     auto buf = ::uv_buf_init(reinterpret_cast<char*>(buffer.GetBuffer()), static_cast<unsigned>(buffer.GetSize()));
     MOE_UV_CHECK(::uv_fs_read(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, &buf, 1, static_cast<int64_t>(offset),
         UVFileSysReq::Callback));
@@ -142,7 +152,9 @@ size_t File::CoRead(MutableBytesView buffer, uint64_t offset)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -151,15 +163,20 @@ size_t File::CoRead(MutableBytesView buffer, uint64_t offset)
 
 size_t File::CoWrite(BytesView buffer, uint64_t offset)
 {
-    assert(offset <= std::numeric_limits<int64_t>::max());
+    assert(offset <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
     if (m_iFd == 0)
         MOE_THROW(InvalidCallException, "No file opened");
-    if (!Coroutine::InCoroutineContext())
-        MOE_THROW(InvalidCallException, "Bad execution context");
     if (buffer.GetSize() == 0)
         return 0;
 
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     auto buf = ::uv_buf_init(const_cast<char*>(reinterpret_cast<const char*>(buffer.GetBuffer())),
         static_cast<unsigned>(buffer.GetSize()));
     MOE_UV_CHECK(::uv_fs_write(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, &buf, 1, static_cast<int64_t>(offset),
@@ -170,7 +187,9 @@ size_t File::CoWrite(BytesView buffer, uint64_t offset)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -179,13 +198,18 @@ size_t File::CoWrite(BytesView buffer, uint64_t offset)
 
 void File::CoTruncate(uint64_t length)
 {
-    assert(length <= std::numeric_limits<int64_t>::max());
+    assert(length <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
     if (m_iFd == 0)
         MOE_THROW(InvalidCallException, "No file opened");
-    if (!Coroutine::InCoroutineContext())
+
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_ftruncate(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, static_cast<int64_t>(length),
         UVFileSysReq::Callback));
 
@@ -194,7 +218,9 @@ void File::CoTruncate(uint64_t length)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -204,10 +230,15 @@ void File::CoFlush()
 {
     if (m_iFd == 0)
         MOE_THROW(InvalidCallException, "No file opened");
-    if (!Coroutine::InCoroutineContext())
+
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_fsync(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -215,7 +246,9 @@ void File::CoFlush()
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -225,10 +258,15 @@ void File::CoFlushData()
 {
     if (m_iFd == 0)
         MOE_THROW(InvalidCallException, "No file opened");
-    if (!Coroutine::InCoroutineContext())
+
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_fdatasync(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -236,7 +274,9 @@ void File::CoFlushData()
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -246,10 +286,15 @@ FileStatus File::CoGetStatus()
 {
     if (m_iFd == 0)
         MOE_THROW(InvalidCallException, "No file opened");
-    if (!Coroutine::InCoroutineContext())
+
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_fstat(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -257,7 +302,9 @@ FileStatus File::CoGetStatus()
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -268,10 +315,15 @@ void File::CoChangeMode(int mode)
 {
     if (m_iFd == 0)
         MOE_THROW(InvalidCallException, "No file opened");
-    if (!Coroutine::InCoroutineContext())
+    
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_fchmod(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, mode, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -279,7 +331,9 @@ void File::CoChangeMode(int mode)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -289,10 +343,15 @@ void File::CoChangeOwner(uv_uid_t uid, uv_gid_t gid)
 {
     if (m_iFd == 0)
         MOE_THROW(InvalidCallException, "No file opened");
-    if (!Coroutine::InCoroutineContext())
+
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_fchown(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, uid, gid, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -300,7 +359,9 @@ void File::CoChangeOwner(uv_uid_t uid, uv_gid_t gid)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -310,10 +371,15 @@ void File::CoSetFileTime(Time::Timestamp accessTime, Time::Timestamp modificatio
 {
     if (m_iFd == 0)
         MOE_THROW(InvalidCallException, "No file opened");
-    if (!Coroutine::InCoroutineContext())
+
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_futime(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, accessTime / 1000.,
         modificationTime / 1000., UVFileSysReq::Callback));
 
@@ -322,7 +388,9 @@ void File::CoSetFileTime(Time::Timestamp accessTime, Time::Timestamp modificatio
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -334,10 +402,14 @@ bool File::Close()noexcept
         return true;
 
     // 协程上下文则使用协程等待
-    if (Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (thread)
     {
         MOE_UV_EAT_EXCEPT_BEGIN
             auto req = ObjectPool::Create<UVFileSysReq>();
+            req->Event = thread->GetScheduler().CreateEvent(true);
+            assert(req->Event);
+
             MOE_UV_CHECK(::uv_fs_close(RunLoop::GetCurrentUVLoop(), &req->Request, m_iFd, UVFileSysReq::Callback));
 
             // 手动增加一个引用计数
@@ -345,7 +417,9 @@ bool File::Close()noexcept
 
             // 发起协程等待
             // 此时协程栈和Request上各自持有一个引用计数
-            Coroutine::Suspend(req->CondVar);
+            auto ret = Coroutine::Wait(req->Event);
+            MOE_UNUSED(ret);
+            assert(ret == ThreadWaitResult::Succeed);
 
             // 获取结果
             MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -449,10 +523,14 @@ bool Filesystem::DirectoryEnumerator::Next(DirectoryEntry& entry)
 
 bool Filesystem::CoExists(const char* path)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_access(RunLoop::GetCurrentUVLoop(), &req->Request, path, F_OK, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -460,23 +538,26 @@ bool Filesystem::CoExists(const char* path)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
-    auto ret = static_cast<int>(req->Request.result);
-    if (ret >= 0)
+    auto result = static_cast<int>(req->Request.result);
+    if (result >= 0)
     {
-        assert(ret == 0);
+        assert(result == 0);
         return true;
     }
-    else if (ret != UV_ENOENT)
-        MOE_UV_THROW(ret);
+    else if (result != UV_ENOENT)
+        MOE_UV_THROW(result);
     return false;
 }
 
 bool Filesystem::CoAccess(const char* path, bool readAccess, bool writeAccess, bool execAccess)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto flags = 0;
@@ -485,6 +566,9 @@ bool Filesystem::CoAccess(const char* path, bool readAccess, bool writeAccess, b
     flags |= (execAccess ? X_OK : 0);
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_access(RunLoop::GetCurrentUVLoop(), &req->Request, path, flags, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -492,26 +576,32 @@ bool Filesystem::CoAccess(const char* path, bool readAccess, bool writeAccess, b
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
-    auto ret = static_cast<int>(req->Request.result);
-    if (ret >= 0)
+    auto result = static_cast<int>(req->Request.result);
+    if (result >= 0)
     {
-        assert(ret == 0);
+        assert(result == 0);
         return true;
     }
-    else if (ret != UV_EACCES)
-        MOE_UV_THROW(ret);
+    else if (result != UV_EACCES)
+        MOE_UV_THROW(result);
     return false;
 }
 
 void Filesystem::CoChangeMode(const char* path, int mode)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_chmod(RunLoop::GetCurrentUVLoop(), &req->Request, path, mode, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -519,7 +609,9 @@ void Filesystem::CoChangeMode(const char* path, int mode)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -527,10 +619,14 @@ void Filesystem::CoChangeMode(const char* path, int mode)
 
 void Filesystem::CoChangeOwner(const char* path, uv_uid_t uid, uv_gid_t gid)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_chown(RunLoop::GetCurrentUVLoop(), &req->Request, path, uid, gid, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -538,7 +634,9 @@ void Filesystem::CoChangeOwner(const char* path, uv_uid_t uid, uv_gid_t gid)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -546,10 +644,14 @@ void Filesystem::CoChangeOwner(const char* path, uv_uid_t uid, uv_gid_t gid)
 
 void Filesystem::CoCreateDirectory(const char* path, int mode)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_mkdir(RunLoop::GetCurrentUVLoop(), &req->Request, path, mode, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -557,7 +659,9 @@ void Filesystem::CoCreateDirectory(const char* path, int mode)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -565,10 +669,14 @@ void Filesystem::CoCreateDirectory(const char* path, int mode)
 
 void Filesystem::CoRemoveDirectory(const char* path)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_rmdir(RunLoop::GetCurrentUVLoop(), &req->Request, path, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -576,7 +684,9 @@ void Filesystem::CoRemoveDirectory(const char* path)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -584,10 +694,14 @@ void Filesystem::CoRemoveDirectory(const char* path)
 
 std::string Filesystem::CoMakeTempDirectory(const char* tpl)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_mkdtemp(RunLoop::GetCurrentUVLoop(), &req->Request, tpl, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -595,7 +709,9 @@ std::string Filesystem::CoMakeTempDirectory(const char* tpl)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -604,10 +720,14 @@ std::string Filesystem::CoMakeTempDirectory(const char* tpl)
 
 FileStatus Filesystem::CoGetStatus(const char* path)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_stat(RunLoop::GetCurrentUVLoop(), &req->Request, path, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -615,7 +735,9 @@ FileStatus Filesystem::CoGetStatus(const char* path)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -624,10 +746,14 @@ FileStatus Filesystem::CoGetStatus(const char* path)
 
 FileStatus Filesystem::CoGetSymbolicLinkStatus(const char* path)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_lstat(RunLoop::GetCurrentUVLoop(), &req->Request, path, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -635,7 +761,9 @@ FileStatus Filesystem::CoGetSymbolicLinkStatus(const char* path)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -644,10 +772,14 @@ FileStatus Filesystem::CoGetSymbolicLinkStatus(const char* path)
 
 void Filesystem::CoUnlink(const char* path)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_unlink(RunLoop::GetCurrentUVLoop(), &req->Request, path, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -655,7 +787,9 @@ void Filesystem::CoUnlink(const char* path)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -663,10 +797,14 @@ void Filesystem::CoUnlink(const char* path)
 
 void Filesystem::CoLink(const char* path, const char* newPath)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_link(RunLoop::GetCurrentUVLoop(), &req->Request, path, newPath, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -674,7 +812,9 @@ void Filesystem::CoLink(const char* path, const char* newPath)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -682,10 +822,14 @@ void Filesystem::CoLink(const char* path, const char* newPath)
 
 void Filesystem::CoSymbolicLink(const char* path, const char* newPath, int flags)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_symlink(RunLoop::GetCurrentUVLoop(), &req->Request, path, newPath, flags,
         UVFileSysReq::Callback));
 
@@ -694,7 +838,9 @@ void Filesystem::CoSymbolicLink(const char* path, const char* newPath, int flags
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -702,10 +848,14 @@ void Filesystem::CoSymbolicLink(const char* path, const char* newPath, int flags
 
 std::string Filesystem::CoReadLink(const char* path)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_readlink(RunLoop::GetCurrentUVLoop(), &req->Request, path, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -713,7 +863,9 @@ std::string Filesystem::CoReadLink(const char* path)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -722,10 +874,14 @@ std::string Filesystem::CoReadLink(const char* path)
 
 std::string Filesystem::CoRealPath(const char* path)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_realpath(RunLoop::GetCurrentUVLoop(), &req->Request, path, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -733,7 +889,9 @@ std::string Filesystem::CoRealPath(const char* path)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -742,10 +900,14 @@ std::string Filesystem::CoRealPath(const char* path)
 
 void Filesystem::CoSetFileTime(const char* path, Time::Timestamp accessTime, Time::Timestamp modificationTime)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_utime(RunLoop::GetCurrentUVLoop(), &req->Request, path, accessTime / 1000.,
         modificationTime / 1000., UVFileSysReq::Callback));
 
@@ -754,7 +916,9 @@ void Filesystem::CoSetFileTime(const char* path, Time::Timestamp accessTime, Tim
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -762,10 +926,14 @@ void Filesystem::CoSetFileTime(const char* path, Time::Timestamp accessTime, Tim
 
 void Filesystem::CoRename(const char* path, const char* newPath)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_rename(RunLoop::GetCurrentUVLoop(), &req->Request, path, newPath, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -773,7 +941,9 @@ void Filesystem::CoRename(const char* path, const char* newPath)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
@@ -781,10 +951,14 @@ void Filesystem::CoRename(const char* path, const char* newPath)
 
 Filesystem::DirectoryEnumerator Filesystem::CoScanDirectory(const char* path, int flags)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_scandir(RunLoop::GetCurrentUVLoop(), &req->Request, path, flags, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -792,23 +966,29 @@ Filesystem::DirectoryEnumerator Filesystem::CoScanDirectory(const char* path, in
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));
 
     // 返回结果
-    DirectoryEnumerator ret;
-    ret.m_pUVRequest = req.Release();
-    return ret;
+    DirectoryEnumerator enumerator;
+    enumerator.m_pUVRequest = req.Release();
+    return enumerator;
 }
 
 File Filesystem::CoOpen(const char* path, int flags, int mode)
 {
-    if (!Coroutine::InCoroutineContext())
+    auto thread = Coroutine::GetCurrentThread();
+    if (!thread)
         MOE_THROW(InvalidCallException, "Bad execution context");
 
     auto req = ObjectPool::Create<UVFileSysReq>();
+    req->Event = thread->GetScheduler().CreateEvent(true);
+    assert(req->Event);
+
     MOE_UV_CHECK(::uv_fs_open(RunLoop::GetCurrentUVLoop(), &req->Request, path, flags, mode, UVFileSysReq::Callback));
 
     // 手动增加一个引用计数
@@ -816,7 +996,9 @@ File Filesystem::CoOpen(const char* path, int flags, int mode)
 
     // 发起协程等待
     // 此时协程栈和Request上各自持有一个引用计数
-    Coroutine::Suspend(req->CondVar);
+    auto ret = Coroutine::Wait(req->Event);
+    MOE_UNUSED(ret);
+    assert(ret == ThreadWaitResult::Succeed);
 
     // 获取结果
     MOE_UV_CHECK(static_cast<int>(req->Request.result));

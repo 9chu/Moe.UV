@@ -28,34 +28,44 @@ Timeout::Timeout()
     BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
 }
 
-Timeout::~Timeout()
-{
-    m_stTickCondVar.Resume(static_cast<ptrdiff_t>(false));
-}
-
-bool Timeout::CoTimeout(Time::Tick timeout)
-{
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Timeout is already closed");
-    MOE_UV_CHECK(::uv_timer_start(&m_stHandle, OnUVTimer, timeout, 0));
-
-    // 等待超时事件
-    return static_cast<bool>(Coroutine::Suspend(m_stTickCondVar));
-}
-
-bool Timeout::Cancel()noexcept
+bool Timeout::Start(Time::Tick timeout)noexcept
 {
     if (IsClosing())
         return false;
 
+    // 理论上不会抛出错误
+    int ret = ::uv_timer_start(&m_stHandle, OnUVTimer, timeout, 0);
+    MOE_UNUSED(ret);
+    assert(ret == 0);
+    return true;
+}
+
+void Timeout::Stop()noexcept
+{
+    if (IsClosing())
+        return;
+
+    // 理论上总是成功的
     auto ret = ::uv_timer_stop(&m_stHandle);
-    if (ret == 0)
-    {
-        // 通知协程取消
-        m_stTickCondVar.Resume(static_cast<ptrdiff_t>(false));
-        return true;
-    }
-    return false;
+    MOE_UNUSED(ret);
+    assert(ret == 0);
+    
+    // 通知协程取消
+    CancelWait();
+}
+
+bool Timeout::CoWait()
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Timer is already closed");
+
+    auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
+    return m_stTimeoutEvent.Wait() == CoEvent::WaitResult::Succeed;
+}
+
+void Timeout::CancelWait()noexcept
+{
+    m_stTimeoutEvent.Cancel();
 }
 
 void Timeout::OnClose()noexcept
@@ -63,10 +73,17 @@ void Timeout::OnClose()noexcept
     IoHandle::OnClose();
 
     // 通知协程取消
-    m_stTickCondVar.Resume(static_cast<ptrdiff_t>(false));
+    CancelWait();
 }
 
 void Timeout::OnTick()noexcept
 {
-    m_stTickCondVar.Resume(static_cast<ptrdiff_t>(true));
+    m_stTimeoutEvent.Resume();
+
+    if (m_stCallback)
+    {
+        MOE_UV_EAT_EXCEPT_BEGIN
+            m_stCallback();
+        MOE_UV_EAT_EXCEPT_END
+    }
 }

@@ -8,7 +8,7 @@
 
 #include "IoHandle.hpp"
 #include "EndPoint.hpp"
-#include "Coroutine.hpp"
+#include "CoEvent.hpp"
 
 namespace moe
 {
@@ -26,6 +26,9 @@ namespace UV
         friend class TcpListener;
 
     public:
+        /**
+         * @brief 创建TCP套接字
+         */
         static IoHandleHolder<TcpSocket> Create();
 
     private:
@@ -82,6 +85,8 @@ namespace UV
         /**
          * @brief （协程）连接地址
          * @param address 地址
+         *
+         * 只能在单个协程调用。
          */
         void CoConnect(const EndPoint& address);
 
@@ -97,6 +102,8 @@ namespace UV
 
         /**
          * @brief （协程）关闭写端并等待数据全部写出
+         *
+         * 只能在单个协程调用。
          */
         void CoShutdown();
 
@@ -111,6 +118,8 @@ namespace UV
          * @param address 地址
          * @param buffer 数据（无拷贝）
          *
+         * 只能在单个协程调用。
+         *
          * 注意：
          * - 协程版本buffer中的数据不会被拷贝
          * - buffer不能分配在协程栈上，必须分配在堆内存上
@@ -121,24 +130,32 @@ namespace UV
          * @brief （协程）接收数据包
          * @param[out] holder 数据缓冲区对象
          * @param[out] view 缓冲区
-         * @return 是否收到数据，若为false表示操作被取消
+         * @param timeout 超时时间
+         * @return 是否收到数据，若为false表示操作被取消或超时
          *
          * 该方法用于异步接收任意长度数据包，一旦有数据可读即触发。亦写作ReadSome。
          * 该方法将直接传出内部缓冲区和有效的读取区段，当holder被释放时内部缓冲区才会交还内存池。
          * 当读取到EOF也会产生false表明操作被取消。
+         *
+         * 只能在单个协程调用。
          */
-        bool CoRead(ObjectPool::BufferPtr& holder, MutableBytesView& view);
+        bool CoRead(ObjectPool::BufferPtr& holder, MutableBytesView& view,
+            Time::Tick timeout=Coroutine::kInfinityTimeout);
 
         /**
          * @brief （协程）读取若干字节
          * @param[in,out] target 目标缓冲区
          * @param[out] count 数量
-         * @return 是否收到数据，若为false表示操作被取消
+         * @param timeout 超时时间
+         * @return 是否收到数据，若为false表示操作被取消或超时
          *
          * 该方法会阻塞协程，直到读取到count个字节的数据。
          * 当读取到EOF也会产生false表明操作被取消。
+         * 注意当超时时可能已完成部分数据的读取。
+         *
+         * 只能在单个协程调用。
          */
-        bool CoRead(uint8_t* target, size_t count);
+        bool CoRead(uint8_t* target, size_t count, Time::Tick timeout=Coroutine::kInfinityTimeout);
 
         /**
          * @brief 立即终止读操作
@@ -162,7 +179,7 @@ namespace UV
         CircularQueue<QueueData, 8> m_stQueuedBuffer;  // 缓存的缓冲区
 
         // 协程
-        CoCondVar m_stReadCondVar;  // 等待读的协程
+        CoEvent m_stReadEvent;  // 等待读的协程
     };
 
     /**
@@ -174,6 +191,11 @@ namespace UV
         friend class ObjectPool;
 
     public:
+        /**
+         * @brief 创建TCP监听器
+         * @param address 地址
+         * @param ipv6Only 是否只监听ipv6地址
+         */
         static IoHandleHolder<TcpListener> Create();
         static IoHandleHolder<TcpListener> Create(const EndPoint& address, bool ipv6Only=false);
 
@@ -206,9 +228,15 @@ namespace UV
 
         /**
          * @brief （协程）等待并接受句柄
-         * @return 接受的Socket对象
+         * @param timeout 超时时间
+         * @return 接受的Socket对象，若取消或者超时，返回nullptr
          */
-        IoHandleHolder<TcpSocket> CoAccept();
+        IoHandleHolder<TcpSocket> CoAccept(Time::Tick timeout=Coroutine::kInfinityTimeout);
+
+        /**
+         * @brief 取消等待的协程
+         */
+        void CancelWait()noexcept;
 
     protected:
         void OnClose()noexcept override;
@@ -219,7 +247,7 @@ namespace UV
         ::uv_tcp_t m_stHandle;
 
         // 协程
-        CoCondVar m_stAcceptCondVar;  // 等待对象的协程
+        CoEvent m_stAcceptEvent;  // 等待对象的协程
     };
 }
 }

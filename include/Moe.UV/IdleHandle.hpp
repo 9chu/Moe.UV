@@ -23,8 +23,13 @@ namespace UV
     public:
         using CallbackType = std::function<void()>;
 
+        /**
+         * @brief 创建空闲句柄
+         * @param callback 句柄触发回调函数
+         */
         static IoHandleHolder<IdleHandle> Create();
-        static IoHandleHolder<IdleHandle> Create(CallbackType callback);
+        static IoHandleHolder<IdleHandle> Create(const CallbackType& callback);
+        static IoHandleHolder<IdleHandle> Create(CallbackType&& callback);
 
     private:
         static void OnUVIdle(uv_idle_t* handle)noexcept;
@@ -33,8 +38,12 @@ namespace UV
         IdleHandle();
 
     public:
+        /**
+         * @brief 获取或设置回调函数
+         */
         CallbackType GetCallback()const noexcept { return m_stCallback; }
-        void SetCallback(CallbackType callback) { m_stCallback = callback; }
+        void SetCallback(const CallbackType& callback) { m_stCallback = callback; }
+        void SetCallback(CallbackType&& callback)noexcept { m_stCallback = std::move(callback); }
 
         /**
          * @brief 启动Idle句柄
