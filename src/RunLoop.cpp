@@ -132,6 +132,7 @@ void RunLoop::Run()
     ::uv_run(&m_stLoop, UV_RUN_DEFAULT);
 
     // 终止句柄
+    m_stSchedulerTimeout->Stop();
     m_stPrepareHandle->Stop();
     m_stCheckHandle->Stop();
 }

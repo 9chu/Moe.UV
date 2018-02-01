@@ -440,7 +440,7 @@ bool TcpSocket::CoRead(uint8_t* target, size_t count, Time::Tick timeout)
 
         // 此时，需要后续数据，阻塞等待
         auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
-        auto ret = m_stReadEvent.Wait();
+        auto ret = m_stReadEvent.Wait(timeout);
         if (ret != CoEvent::WaitResult::Succeed)
             return false;  // 操作取消
     }
