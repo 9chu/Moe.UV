@@ -37,7 +37,16 @@ Time::Tick RunLoop::Now()noexcept
 
 void RunLoop::UVClosingHandleWalker(::uv_handle_t* handle, void* arg)noexcept
 {
-    MOE_UNUSED(arg);
+    RunLoop* self = static_cast<RunLoop*>(arg);
+
+    if (handle == self->m_stPrepareHandle->GetHandle() ||
+        handle == self->m_stCheckHandle->GetHandle() ||
+        handle == self->m_stSchedulerTimeout->GetHandle())
+    {
+        // 忽略内部句柄
+        return;
+    }
+
     if (!::uv_is_closing(handle))
     {
         if (handle->data != nullptr)
@@ -96,34 +105,23 @@ RunLoop::~RunLoop()
     m_stSchedulerTimeout.Clear();
     m_stCheckHandle.Clear();
     m_stPrepareHandle.Clear();
-
-    // 等待所有句柄和请求结束
-    while (::uv_loop_alive(&m_stLoop) != 0 || !m_stScheduler.IsIdle())
-    {
-        ::uv_walk(&m_stLoop, UVClosingHandleWalker, nullptr);
-        ::uv_run(&m_stLoop, UV_RUN_NOWAIT);  // 执行Close回调
-
-        m_stScheduler.Update(::uv_now(&m_stLoop));
-
-        if (m_uMinimalTick)
-            this_thread::sleep_for(chrono::milliseconds(m_uMinimalTick));
-        else
-            this_thread::sleep_for(chrono::milliseconds(10));
-    }
-
+    
     // 关闭Loop句柄
     int ret = ::uv_loop_close(&m_stLoop);
-    MOE_UV_LOG_ERROR(ret);
-    assert(ret == 0);
+    if (ret != 0)
+    {
+        MOE_UV_LOG_ERROR(ret);
+        assert(ret == 0);
+
+        // 必须主动关闭所有句柄才能正常退出
+        ::terminate();
+    }
 
     t_pRunLoop = nullptr;
 }
 
 void RunLoop::Run()
 {
-    // 先执行一次协程调度，防止在uv_run之前对象还没创建出来就退出了循环
-    m_stScheduler.Update(::uv_now(&m_stLoop));
-
     // 启动句柄
     m_stPrepareHandle->Start();
     m_stCheckHandle->Start();
@@ -140,6 +138,11 @@ void RunLoop::Run()
 void RunLoop::Stop()noexcept
 {
     ::uv_stop(&m_stLoop);
+}
+
+void RunLoop::ForceCloseAllHandle()noexcept
+{
+    ::uv_walk(&m_stLoop, UVClosingHandleWalker, this);
 }
 
 void RunLoop::UpdateTime()noexcept

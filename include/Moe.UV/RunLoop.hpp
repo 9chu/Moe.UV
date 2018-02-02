@@ -107,6 +107,11 @@ namespace UV
         void Stop()noexcept;
 
         /**
+         * @brief 强制关闭所有句柄
+         */
+        void ForceCloseAllHandle()noexcept;
+
+        /**
          * @brief 立即更新滴答数
          */
         void UpdateTime()noexcept;

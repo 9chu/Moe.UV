@@ -20,6 +20,12 @@
 #ifdef GetCurrentTime
 #undef GetCurrentTime
 #endif
+#ifdef CreateEvent
+#undef CreateEvent
+#endif
+#ifdef CreateSemaphore
+#undef CreateSemaphore
+#endif
 
 namespace moe
 {
@@ -58,6 +64,11 @@ namespace UV
 
     public:
         /**
+         * @brief 获取内部句柄
+         */
+        ::uv_handle_t* GetHandle()const noexcept { return m_pHandle; }
+
+        /**
          * @brief 是否已经关闭
          */
         bool IsClosed()const noexcept { return m_bHandleClosed; }
@@ -72,10 +83,10 @@ namespace UV
         /**
          * @brief 增加RunLoop对句柄的引用
          */
-        void Ref()
+        void Ref()noexcept
         {
             if (IsClosed())
-                MOE_THROW(InvalidCallException, "Handle is already closed");
+                return;
             ::uv_ref(m_pHandle);
         }
 
@@ -84,10 +95,10 @@ namespace UV
          *
          * 当句柄被RunLoop解除引用后RunLoop将不等待这一句柄结束。
          */
-        void Unref()
+        void Unref()noexcept
         {
             if (IsClosed())
-                MOE_THROW(InvalidCallException, "Handle is already closed");
+                return;
             ::uv_unref(m_pHandle);
         }
 
