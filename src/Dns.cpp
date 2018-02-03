@@ -22,7 +22,7 @@ namespace
     {
         ::uv_getaddrinfo_t Request;
 
-        RefPtr<Event> Event;
+        RefPtr<Coroutine::Event> Event;
         exception_ptr Exception;
 
         vector<EndPoint> Result;
@@ -102,7 +102,7 @@ namespace
     {
         ::uv_getnameinfo_t Request;
 
-        RefPtr<Event> Event;
+        RefPtr<Coroutine::Event> Event;
         exception_ptr Exception;
 
         string Hostname;

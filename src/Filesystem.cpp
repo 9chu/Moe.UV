@@ -46,7 +46,7 @@ namespace
         public ObjectPool::RefBase<UVFileSysReq>
     {
         ::uv_fs_t Request;
-        RefPtr<Event> Event;
+        RefPtr<Coroutine::Event> Event;
 
         UVFileSysReq()
         {
