@@ -196,16 +196,10 @@ namespace UV
 
 #define MOE_UV_THROW(status) \
     do { \
-        if (status == UV_ECANCELED) \
+        if ((status) == UV_ECANCELED) \
             MOE_THROW(OperationCancelledException, "Operation is cancelled"); \
-        moe::APIException ex; \
         const char* err = ::uv_strerror((status)); \
-        ex.SetSourceFile(__FILE__); \
-        ex.SetFunctionName(__FUNCTION__); \
-        ex.SetLineNumber(__LINE__); \
-        ex.SetDescription(moe::StringUtils::Format("libuv error {0}: {1}", status, err)); \
-        ex.SetInfo("ErrCode", (status)); \
-        throw ex; \
+        MOE_THROW(ApiException, "libuv error {0}: {1}", status, err); \
     } while (false)
 
 #define MOE_UV_LOG_ERROR(status) \
