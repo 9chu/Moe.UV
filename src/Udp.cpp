@@ -174,6 +174,54 @@ void UdpSocket::Bind(const EndPoint& address, bool reuse, bool ipv6Only)
     MOE_UV_CHECK(::uv_udp_bind(&m_stHandle, reinterpret_cast<const sockaddr*>(&address.Storage), flags));
 }
 
+void UdpSocket::StartRead(const ReadCallbackType& callback)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (m_eReadState != ReadState::NotReading)
+        return;
+
+    MOE_UV_CHECK(::uv_udp_recv_start(&m_stHandle, OnUVAllocBuffer, OnUVRecv));
+
+    m_eReadState = ReadState::Reading;
+    m_stReadCallback = callback;
+}
+
+void UdpSocket::StartRead(ReadCallbackType&& callback)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (m_eReadState != ReadState::NotReading)
+        return;
+
+    MOE_UV_CHECK(::uv_udp_recv_start(&m_stHandle, OnUVAllocBuffer, OnUVRecv));
+
+    m_eReadState = ReadState::Reading;
+    m_stReadCallback = std::move(callback);
+}
+
+bool UdpSocket::StopRead()noexcept
+{
+    if (IsClosing())
+        return false;
+    auto ret = ::uv_udp_recv_stop(&m_stHandle);
+    if (ret == 0)
+    {
+        // 清空回调
+        m_stReadCallback = nullptr;
+
+        // 清空未读数据
+        m_stQueuedBuffer.Clear();
+
+        // 通知句柄退出
+        m_stReadEvent.Cancel();
+
+        m_eReadState = ReadState::NotReading;
+        return true;
+    }
+    return false;
+}
+
 void UdpSocket::Send(const EndPoint& address, BytesView buffer)
 {
     if (IsClosing())
@@ -199,6 +247,51 @@ void UdpSocket::Send(const EndPoint& address, BytesView buffer)
     // 释放所有权，交由UV管理
     ::uv_udp_send_t& req = request->Request;
     req.data = request.Release();
+}
+
+bool UdpSocket::CoRead(EndPoint& remote, ObjectPool::BufferPtr& buffer, size_t& size, Time::Tick timeout)
+{
+    // 检查缓冲区是否有未处理数据
+    if (!m_stQueuedBuffer.IsEmpty())
+    {
+        // 如果有，则直接返回
+        auto q = m_stQueuedBuffer.Pop();
+        remote = q.Remote;
+        buffer = std::move(q.Buffer);
+        size = q.Length;
+        return true;
+    }
+
+    // 如果缓冲区无数据，则等待
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (m_stReadCallback)
+        MOE_THROW(InvalidCallException, "Already set callback");
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    // 检查状态，如果是停止状态则发起读操作
+    if (m_eReadState == ReadState::Pending)
+    {
+        MOE_UV_CHECK(::uv_udp_recv_start(&m_stHandle, OnUVAllocBuffer, OnUVRecv));
+        m_eReadState = ReadState::Reading;
+    }
+    else if (m_eReadState == ReadState::NotReading)
+        MOE_THROW(InvalidCallException, "Socket not reading");
+
+    auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
+    auto ret = m_stReadEvent.Wait(timeout);
+    if (ret == CoEvent::WaitResult::Succeed)
+    {
+        // 此时缓冲区必然有数据
+        assert(!m_stQueuedBuffer.IsEmpty());
+        auto q = m_stQueuedBuffer.Pop();
+        remote = q.Remote;
+        buffer = std::move(q.Buffer);
+        size = q.Length;
+        return true;
+    }
+    return false;
 }
 
 void UdpSocket::CoSend(const EndPoint& address, BytesView buffer)
@@ -228,70 +321,11 @@ void UdpSocket::CoSend(const EndPoint& address, BytesView buffer)
     request->Event.Wait();
 }
 
-bool UdpSocket::CoRead(EndPoint& remote, ObjectPool::BufferPtr& buffer, size_t& size, Time::Tick timeout)
-{
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
-    if (!Coroutine::GetCurrentThread())
-        MOE_THROW(InvalidCallException, "Bad execution context");
-
-    // 如果没有在读，则发起读操作
-    if (!m_bReading)
-    {
-        MOE_UV_CHECK(::uv_udp_recv_start(&m_stHandle, OnUVAllocBuffer, OnUVRecv));
-        m_bReading = true;
-    }
-
-    // 检查缓冲区是否有未处理数据
-    if (!m_stQueuedBuffer.IsEmpty())
-    {
-        // 如果有，则直接返回
-        auto q = m_stQueuedBuffer.Pop();
-        remote = q.Remote;
-        buffer = std::move(q.Buffer);
-        size = q.Length;
-        return true;
-    }
-
-    // 如果缓冲区无数据，则等待
-    auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
-    auto ret = m_stReadEvent.Wait(timeout);
-    if (ret == CoEvent::WaitResult::Succeed)
-    {
-        // 此时缓冲区必然有数据
-        assert(!m_stQueuedBuffer.IsEmpty());
-        auto q = m_stQueuedBuffer.Pop();
-        remote = q.Remote;
-        buffer = std::move(q.Buffer);
-        size = q.Length;
-        return true;
-    }
-    return false;
-}
-
-bool UdpSocket::CancelRead()noexcept
-{
-    if (IsClosing())
-        return false;
-    auto ret = ::uv_udp_recv_stop(&m_stHandle);
-    if (ret == 0)
-    {
-        // 清空未读数据
-        m_stQueuedBuffer.Clear();
-
-        // 通知句柄退出
-        m_stReadEvent.Cancel();
-
-        m_bReading = false;
-        return true;
-    }
-    return false;
-}
-
 void UdpSocket::OnClose()noexcept
 {
     IoHandle::Close();
-    m_bReading = false;
+    m_eReadState = ReadState::NotReading;
+    m_stReadCallback = nullptr;
 
     // 通知句柄退出
     m_stReadEvent.Cancel();
@@ -305,14 +339,23 @@ void UdpSocket::OnError(int error)noexcept
     // 关闭连接
     Close();
 
-    // 终止读句柄
-    try
+    // 终止读操作
+    if (m_stReadCallback)
     {
-        MOE_UV_THROW(error);
+        MOE_UV_EAT_EXCEPT_BEGIN
+            m_stReadCallback(error, EndPoint(), nullptr, 0u);
+        MOE_UV_EAT_EXCEPT_END
     }
-    catch (...)
+    else
     {
-        m_stReadEvent.Throw(current_exception());
+        try
+        {
+            MOE_UV_THROW(error);
+        }
+        catch (...)
+        {
+            m_stReadEvent.Throw(current_exception());
+        }
     }
 }
 
@@ -324,6 +367,16 @@ void UdpSocket::OnSend(size_t len)noexcept
 
 void UdpSocket::OnRead(const EndPoint& remote, ObjectPool::BufferPtr buffer, size_t len)noexcept
 {
+    // 如果有回调函数，直接调用
+    if (m_stReadCallback)
+    {
+        MOE_UV_EAT_EXCEPT_BEGIN
+            m_stReadCallback(0, remote, std::move(buffer), len);
+        MOE_UV_EAT_EXCEPT_END
+        return;
+    }
+
+    // 否则将数据丢入队列并激活协程
     QueueData data;
     data.Remote = remote;
     data.Buffer = std::move(buffer);
@@ -336,12 +389,12 @@ void UdpSocket::OnRead(const EndPoint& remote, ObjectPool::BufferPtr buffer, siz
     // 数据已满，停止读操作
     if (m_stQueuedBuffer.IsFull())
     {
-        if (m_bReading)
+        if (m_eReadState == ReadState::Reading)
         {
             auto error = ::uv_udp_recv_stop(&m_stHandle);
             MOE_UNUSED(error);
             assert(error == 0);
-            m_bReading = false;
+            m_eReadState = ReadState::Pending;
         }
     }
 

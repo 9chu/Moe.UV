@@ -154,6 +154,18 @@ namespace UV
             return *this;
         }
 
+        Pointer operator*()noexcept
+        {
+            assert(m_pPointer);
+            return m_pPointer;
+        }
+
+        const Pointer operator*()const noexcept
+        {
+            assert(m_pPointer);
+            return m_pPointer;
+        }
+
         T* operator->()noexcept
         {
             assert(m_pPointer);

@@ -7,6 +7,8 @@
 #include "IoHandle.hpp"
 #include "CoEvent.hpp"
 
+#include <functional>
+
 namespace moe
 {
 namespace UV

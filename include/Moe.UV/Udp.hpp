@@ -4,6 +4,7 @@
  * @date 2017/12/8
  */
 #pragma once
+#include <functional>
 #include <Moe.Core/CircularQueue.hpp>
 
 #include "IoHandle.hpp"
@@ -23,6 +24,8 @@ namespace UV
         friend class ObjectPool;
 
     public:
+        using ReadCallbackType = std::function<void(int, const EndPoint&, ObjectPool::BufferPtr, size_t)>;
+
         /**
          * @brief 构造UDP套接字
          * @param bind 绑定端口
@@ -33,6 +36,13 @@ namespace UV
         static IoHandleHolder<UdpSocket> Create(const EndPoint& bind, bool reuse=true, bool ipv6Only=false);
 
     private:
+        enum class ReadState
+        {
+            NotReading,
+            Reading,
+            Pending,
+        };
+
         struct QueueData
         {
             EndPoint Remote;
@@ -72,6 +82,28 @@ namespace UV
         void Bind(const EndPoint& address, bool reuse=true, bool ipv6Only=false);
 
         /**
+         * @brief 开始接收数据包
+         * @param callback 回调函数
+         *
+         * 开始接受数据包。
+         * 当指定回调函数时，会通过回调函数通知数据包到来。
+         * 当不指定回调函数时，数据包会被缓存到队列，此时可以通过协程读方法获取数据。
+         */
+        void StartRead(const ReadCallbackType& callback=ReadCallbackType());
+        void StartRead(ReadCallbackType&& callback);
+
+        /**
+         * @brief 停止读取数据包
+         *
+         * 停止接受数据包。
+         * 方法会清除回调函数，并通知等待在读事件上的协程退出。
+         * 当有未读取的数据时会丢弃队列。
+         *
+         * 如果使用Close而不是CancelRead将会引发OperationCancelledException。
+         */
+        bool StopRead()noexcept;
+
+        /**
          * @brief （无阻塞）发送数据包
          * @param address 地址
          * @param buffer 数据（将被拷贝到内部缓冲区，调用后可以立即释放）
@@ -79,20 +111,6 @@ namespace UV
          * 如果尚未绑定端口，则会绑定到0.0.0.0和随机端口上。
          */
         void Send(const EndPoint& address, BytesView buffer);
-
-        /**
-         * @brief （协程）发送数据包并等待
-         * @param address 地址
-         * @param buffer 数据（无拷贝）
-         *
-         * 如果尚未绑定端口，则会绑定到0.0.0.0和随机端口上。
-         * 仅允许单个协程调用。
-         *
-         * 注意：
-         * - 协程版本buffer中的数据不会被拷贝
-         * - buffer不能分配在协程栈上，必须分配在堆内存上
-         */
-        void CoSend(const EndPoint& address, BytesView buffer);
 
         /**
          * @brief （协程）接收数据包
@@ -109,12 +127,18 @@ namespace UV
             Time::Tick timeout=Coroutine::kInfinityTimeout);
 
         /**
-         * @brief 立即终止读操作
+         * @brief （协程）发送数据包并等待
+         * @param address 地址
+         * @param buffer 数据（无拷贝）
          *
-         * 立即终止读操作，激活等待的协程并且抛弃缓冲的数据包。
-         * 如果使用Close而不是CancelRead将会引发OperationCancelledException。
+         * 如果尚未绑定端口，则会绑定到0.0.0.0和随机端口上。
+         * 仅允许单个协程调用。
+         *
+         * 注意：
+         * - 协程版本buffer中的数据不会被拷贝
+         * - buffer不能分配在协程栈上，必须分配在堆内存上
          */
-        bool CancelRead()noexcept;
+        void CoSend(const EndPoint& address, BytesView buffer);
 
     protected:
         void OnClose()noexcept override;
@@ -125,11 +149,14 @@ namespace UV
     private:
         ::uv_udp_t m_stHandle;
 
-        bool m_bReading = false;
+        ReadState m_eReadState = ReadState::NotReading;  // 读状态
         CircularQueue<QueueData, 8> m_stQueuedBuffer;  // 缓存的缓冲区
 
         // 协程
         CoEvent m_stReadEvent;  // 等待读的协程
+
+        // 回调
+        ReadCallbackType m_stReadCallback;
     };
 }
 }
