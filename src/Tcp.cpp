@@ -23,6 +23,7 @@ namespace
         ::uv_connect_t Request;
 
         CoEvent Event;
+        TcpSocket::ConnectCallbackType Callback;
     };
 
     struct ShutdownRequest :
@@ -32,6 +33,7 @@ namespace
         ::uv_shutdown_t Request;
 
         CoEvent Event;
+        TcpSocket::ShutdownCallbackType Callback;
     };
 
     struct WriteRequest :
@@ -58,22 +60,31 @@ void TcpSocket::OnUVConnect(::uv_connect_t* req, int status)noexcept
     RefPtr<ConnectRequest> holder(static_cast<ConnectRequest*>(req->data));
     auto self = holder->Self;
 
-    if (status != 0)
+    if (holder->Callback)
     {
-        // 触发一个异常给Coroutine
-        try
-        {
-            MOE_UV_THROW(status);
-        }
-        catch (...)
-        {
-            holder->Event.Throw(current_exception());
-        }
+        MOE_UV_EAT_EXCEPT_BEGIN
+            holder->Callback(status);
+        MOE_UV_EAT_EXCEPT_END
     }
     else
     {
-        // 恢复Coroutine
-        holder->Event.Resume();
+        if (status != 0)
+        {
+            // 触发一个异常给Coroutine
+            try
+            {
+                MOE_UV_THROW(status);
+            }
+            catch (...)
+            {
+                holder->Event.Throw(current_exception());
+            }
+        }
+        else
+        {
+            // 恢复Coroutine
+            holder->Event.Resume();
+        }
     }
 }
 
@@ -82,22 +93,31 @@ void TcpSocket::OnUVShutdown(::uv_shutdown_t* req, int status)noexcept
     RefPtr<ShutdownRequest> holder(static_cast<ShutdownRequest*>(req->data));
     auto self = holder->Self;
 
-    if (status != 0)
+    if (holder->Callback)
     {
-        // 触发一个异常给Coroutine
-        try
-        {
-            MOE_UV_THROW(status);
-        }
-        catch (...)
-        {
-            holder->Event.Throw(current_exception());
-        }
+        MOE_UV_EAT_EXCEPT_BEGIN
+            holder->Callback(status);
+        MOE_UV_EAT_EXCEPT_END
     }
     else
     {
-        // 恢复Coroutine
-        holder->Event.Resume();
+        if (status != 0)
+        {
+            // 触发一个异常给Coroutine
+            try
+            {
+                MOE_UV_THROW(status);
+            }
+            catch (...)
+            {
+                holder->Event.Throw(current_exception());
+            }
+        }
+        else
+        {
+            // 恢复Coroutine
+            holder->Event.Resume();
+        }
     }
 }
 
@@ -237,37 +257,6 @@ void TcpSocket::SetKeepAlive(bool enable, uint32_t delay)
     MOE_UV_CHECK(::uv_tcp_keepalive(&m_stHandle, enable ? 1 : 0, delay));
 }
 
-void TcpSocket::Bind(const EndPoint& address, bool ipv6Only)
-{
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
-
-    unsigned flags = 0;
-    flags |= (ipv6Only ? UV_TCP_IPV6ONLY : 0);
-    MOE_UV_CHECK(::uv_tcp_bind(&m_stHandle, reinterpret_cast<const sockaddr*>(&address.Storage), flags));
-}
-
-void TcpSocket::CoConnect(const EndPoint& address)
-{
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
-    if (!Coroutine::GetCurrentThread())
-        MOE_THROW(InvalidCallException, "Bad execution context");
-
-    auto request = ObjectPool::Create<ConnectRequest>();
-    request->Self = RefFromThis().CastTo<TcpSocket>();
-
-    // 发起连接操作
-    MOE_UV_CHECK(::uv_tcp_connect(&request->Request, &m_stHandle, reinterpret_cast<const ::sockaddr*>(&address.Storage),
-        OnUVConnect));
-
-    // Coroutine版本复制一份所有权
-    request->Request.data = RefPtr<ConnectRequest>(request).Release();
-
-    // 发起等待操作
-    request->Event.Wait();
-}
-
 bool TcpSocket::IsReadable()const noexcept
 {
     if (IsClosing())
@@ -284,24 +273,101 @@ bool TcpSocket::IsWritable()const noexcept
     return ::uv_is_writable(reinterpret_cast<const ::uv_stream_t*>(&m_stHandle)) == 1;
 }
 
-void TcpSocket::CoShutdown()
+void TcpSocket::Bind(const EndPoint& address, bool ipv6Only)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+
+    unsigned flags = 0;
+    flags |= (ipv6Only ? UV_TCP_IPV6ONLY : 0);
+    MOE_UV_CHECK(::uv_tcp_bind(&m_stHandle, reinterpret_cast<const sockaddr*>(&address.Storage), flags));
+}
+
+void TcpSocket::Connect(const EndPoint& address, const ConnectCallbackType& callback)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
     if (!Coroutine::GetCurrentThread())
         MOE_THROW(InvalidCallException, "Bad execution context");
 
-    auto request = ObjectPool::Create<ShutdownRequest>();
+    auto request = ObjectPool::Create<ConnectRequest>();
     request->Self = RefFromThis().CastTo<TcpSocket>();
+    request->Callback = callback;
 
-    // 发起Shutdown操作
-    MOE_UV_CHECK(::uv_shutdown(&request->Request, reinterpret_cast<::uv_stream_t*>(&m_stHandle), OnUVShutdown));
+    // 发起连接操作
+    MOE_UV_CHECK(::uv_tcp_connect(&request->Request, &m_stHandle, reinterpret_cast<const ::sockaddr*>(&address.Storage),
+        OnUVConnect));
+}
 
-    // Coroutine版本复制一份所有权
-    request->Request.data = RefPtr<ShutdownRequest>(request).Release();
+void TcpSocket::Connect(const EndPoint& address, ConnectCallbackType&& callback)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
 
-    // 发起等待操作
-    request->Event.Wait();
+    auto request = ObjectPool::Create<ConnectRequest>();
+    request->Self = RefFromThis().CastTo<TcpSocket>();
+    request->Callback = std::move(callback);
+
+    // 发起连接操作
+    MOE_UV_CHECK(::uv_tcp_connect(&request->Request, &m_stHandle, reinterpret_cast<const ::sockaddr*>(&address.Storage),
+        OnUVConnect));
+}
+
+void TcpSocket::StartRead(const ReadCallbackType& callback)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (m_eReadState != ReadState::NotReading)
+        return;
+
+    MOE_UV_CHECK(::uv_read_start(reinterpret_cast<::uv_stream_t*>(&m_stHandle), OnUVAllocBuffer, OnUVRead));
+
+    m_eReadState = ReadState::Reading;
+    m_stReadCallback = callback;
+
+    // 此时表明上次读取是协程进行的，但是没有全部读完
+    while (m_stReadCallback && !m_stQueuedBuffer.IsEmpty())
+    {
+        auto q = m_stQueuedBuffer.Pop();
+
+        MOE_UV_EAT_EXCEPT_BEGIN
+            m_stReadCallback(0, std::move(q.Holder), q.View);
+        MOE_UV_EAT_EXCEPT_END
+    }
+}
+
+void TcpSocket::StartRead(ReadCallbackType&& callback)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (m_eReadState != ReadState::NotReading)
+        return;
+
+    MOE_UV_CHECK(::uv_read_start(reinterpret_cast<::uv_stream_t*>(&m_stHandle), OnUVAllocBuffer, OnUVRead));
+
+    m_eReadState = ReadState::Reading;
+    m_stReadCallback = std::move(callback);
+}
+
+bool TcpSocket::StopRead()noexcept
+{
+    if (IsClosing())
+        return false;
+    auto ret = ::uv_read_stop(reinterpret_cast<::uv_stream_t*>(&m_stHandle));
+    if (ret == 0)
+    {
+        // 清空回调
+        m_stReadCallback = nullptr;
+
+        // TCP版本不会清空缓冲区，只通知句柄退出
+        m_stReadEvent.Cancel();
+
+        m_eReadState = ReadState::NotReading;
+        return true;
+    }
+    return false;
 }
 
 void TcpSocket::Send(BytesView buffer)
@@ -334,28 +400,52 @@ void TcpSocket::Send(BytesView buffer)
     }
 }
 
-void TcpSocket::CoSend(BytesView buffer)
+void TcpSocket::Shutdown(const ShutdownCallbackType& callback)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
-    if (buffer.GetSize() == 0)
-        return;
     if (!Coroutine::GetCurrentThread())
         MOE_THROW(InvalidCallException, "Bad execution context");
 
-    auto request = ObjectPool::Create<WriteRequest>();
+    auto request = ObjectPool::Create<ShutdownRequest>();
+    request->Self = RefFromThis().CastTo<TcpSocket>();
+    request->Callback = callback;
+
+    // 发起Shutdown操作
+    MOE_UV_CHECK(::uv_shutdown(&request->Request, reinterpret_cast<::uv_stream_t*>(&m_stHandle), OnUVShutdown));
+}
+
+void TcpSocket::Shutdown(ShutdownCallbackType&& callback)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto request = ObjectPool::Create<ShutdownRequest>();
+    request->Self = RefFromThis().CastTo<TcpSocket>();
+    request->Callback = std::move(callback);
+
+    // 发起Shutdown操作
+    MOE_UV_CHECK(::uv_shutdown(&request->Request, reinterpret_cast<::uv_stream_t*>(&m_stHandle), OnUVShutdown));
+}
+
+void TcpSocket::CoConnect(const EndPoint& address)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto request = ObjectPool::Create<ConnectRequest>();
     request->Self = RefFromThis().CastTo<TcpSocket>();
 
-    // Coroutine版本不用复制缓冲区
-    request->BufferDesc = ::uv_buf_init(reinterpret_cast<char*>(const_cast<uint8_t*>(buffer.GetBuffer())),
-        static_cast<unsigned>(buffer.GetSize()));
-
-    // 发起写操作
-    MOE_UV_CHECK(::uv_write(&request->Request, reinterpret_cast<::uv_stream_t*>(&m_stHandle), &(request->BufferDesc),
-        1, OnUVWrite));
+    // 发起连接操作
+    MOE_UV_CHECK(::uv_tcp_connect(&request->Request, &m_stHandle, reinterpret_cast<const ::sockaddr*>(&address.Storage),
+        OnUVConnect));
 
     // Coroutine版本复制一份所有权
-    request->Request.data = RefPtr<WriteRequest>(request).Release();
+    request->Request.data = RefPtr<ConnectRequest>(request).Release();
 
     // 发起等待操作
     request->Event.Wait();
@@ -363,16 +453,6 @@ void TcpSocket::CoSend(BytesView buffer)
 
 bool TcpSocket::CoRead(ObjectPool::BufferPtr& holder, MutableBytesView& view, Time::Tick timeout)
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
-
-    // 如果没有在读，则发起读操作
-    if (!m_bReading)
-    {
-        MOE_UV_CHECK(::uv_read_start(reinterpret_cast<::uv_stream_t*>(&m_stHandle), OnUVAllocBuffer, OnUVRead));
-        m_bReading = true;
-    }
-
     // 检查缓冲区是否有未处理数据
     if (!m_stQueuedBuffer.IsEmpty())
     {
@@ -384,6 +464,22 @@ bool TcpSocket::CoRead(ObjectPool::BufferPtr& holder, MutableBytesView& view, Ti
     }
 
     // 如果缓冲区无数据，则等待
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (m_stReadCallback)
+        MOE_THROW(InvalidCallException, "Already set callback");
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    // 检查状态，如果是停止状态则发起读操作
+    if (m_eReadState == ReadState::Pending)
+    {
+        MOE_UV_CHECK(::uv_read_start(reinterpret_cast<::uv_stream_t*>(&m_stHandle), OnUVAllocBuffer, OnUVRead));
+        m_eReadState = ReadState::Reading;
+    }
+    else if (m_eReadState == ReadState::NotReading)
+        MOE_THROW(InvalidCallException, "Socket not reading");
+
     auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
     auto ret = m_stReadEvent.Wait(timeout);
     if (ret == CoEvent::WaitResult::Succeed)
@@ -400,16 +496,6 @@ bool TcpSocket::CoRead(ObjectPool::BufferPtr& holder, MutableBytesView& view, Ti
 
 bool TcpSocket::CoRead(uint8_t* target, size_t count, Time::Tick timeout)
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
-
-    // 如果没有在读，则发起读操作
-    if (!m_bReading)
-    {
-        MOE_UV_CHECK(::uv_read_start(reinterpret_cast<::uv_stream_t*>(&m_stHandle), OnUVAllocBuffer, OnUVRead));
-        m_bReading = true;
-    }
-
     while (count > 0)
     {
         // 从缓冲区读出数据填入目标数组
@@ -439,6 +525,22 @@ bool TcpSocket::CoRead(uint8_t* target, size_t count, Time::Tick timeout)
         }
 
         // 此时，需要后续数据，阻塞等待
+        if (IsClosing())
+            MOE_THROW(InvalidCallException, "Socket has been shutdown");
+        if (m_stReadCallback)
+            MOE_THROW(InvalidCallException, "Already set callback");
+        if (!Coroutine::GetCurrentThread())
+            MOE_THROW(InvalidCallException, "Bad execution context");
+
+        // 检查状态，如果是停止状态则发起读操作
+        if (m_eReadState == ReadState::Pending)
+        {
+            MOE_UV_CHECK(::uv_read_start(reinterpret_cast<::uv_stream_t*>(&m_stHandle), OnUVAllocBuffer, OnUVRead));
+            m_eReadState = ReadState::Reading;
+        }
+        else if (m_eReadState == ReadState::NotReading)
+            MOE_THROW(InvalidCallException, "Socket not reading");
+
         auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
         auto ret = m_stReadEvent.Wait(timeout);
         if (ret != CoEvent::WaitResult::Succeed)
@@ -447,26 +549,69 @@ bool TcpSocket::CoRead(uint8_t* target, size_t count, Time::Tick timeout)
     return true;
 }
 
-bool TcpSocket::CancelRead()noexcept
+void TcpSocket::CoSend(BytesView buffer)
 {
     if (IsClosing())
-        return false;
-    auto ret = ::uv_read_stop(reinterpret_cast<::uv_stream_t*>(&m_stHandle));
-    if (ret == 0)
-    {
-        // TCP版本不会清空缓冲区，只通知句柄退出
-        m_stReadEvent.Cancel();
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (buffer.GetSize() == 0)
+        return;
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
 
-        m_bReading = false;
-        return true;
-    }
-    return false;
+    auto request = ObjectPool::Create<WriteRequest>();
+    request->Self = RefFromThis().CastTo<TcpSocket>();
+
+    // Coroutine版本不用复制缓冲区
+    request->BufferDesc = ::uv_buf_init(reinterpret_cast<char*>(const_cast<uint8_t*>(buffer.GetBuffer())),
+        static_cast<unsigned>(buffer.GetSize()));
+
+    // 发起写操作
+    MOE_UV_CHECK(::uv_write(&request->Request, reinterpret_cast<::uv_stream_t*>(&m_stHandle), &(request->BufferDesc),
+        1, OnUVWrite));
+
+    // Coroutine版本复制一份所有权
+    request->Request.data = RefPtr<WriteRequest>(request).Release();
+
+    // 发起等待操作
+    request->Event.Wait();
+}
+
+void TcpSocket::CoShutdown()
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (!Coroutine::GetCurrentThread())
+        MOE_THROW(InvalidCallException, "Bad execution context");
+
+    auto request = ObjectPool::Create<ShutdownRequest>();
+    request->Self = RefFromThis().CastTo<TcpSocket>();
+
+    // 发起Shutdown操作
+    MOE_UV_CHECK(::uv_shutdown(&request->Request, reinterpret_cast<::uv_stream_t*>(&m_stHandle), OnUVShutdown));
+
+    // Coroutine版本复制一份所有权
+    request->Request.data = RefPtr<ShutdownRequest>(request).Release();
+
+    // 发起等待操作
+    request->Event.Wait();
 }
 
 void TcpSocket::OnClose()noexcept
 {
     IoHandle::Close();
-    m_bReading = false;
+    m_eReadState = ReadState::NotReading;
+    m_stReadCallback = nullptr;
+
+    // 通知句柄退出
+    if (m_stReadCallback)
+    {
+        auto cb = std::move(m_stReadCallback);
+        MOE_UV_EAT_EXCEPT_BEGIN
+            cb(0, nullptr, MutableBytesView());
+        MOE_UV_EAT_EXCEPT_END
+    }
+    else
+        m_stReadEvent.Cancel();
 }
 
 void TcpSocket::OnError(int error)noexcept
@@ -478,13 +623,23 @@ void TcpSocket::OnError(int error)noexcept
     Close();
 
     // 终止读句柄
-    try
+    if (m_stReadCallback)
     {
-        MOE_UV_THROW(error);
+        auto cb = std::move(m_stReadCallback);
+        MOE_UV_EAT_EXCEPT_BEGIN
+            cb(error, nullptr, MutableBytesView());
+        MOE_UV_EAT_EXCEPT_END
     }
-    catch (...)
+    else
     {
-        m_stReadEvent.Throw(current_exception());
+        try
+        {
+            MOE_UV_THROW(error);
+        }
+        catch (...)
+        {
+            m_stReadEvent.Throw(current_exception());
+        }
     }
 }
 
@@ -496,6 +651,16 @@ void TcpSocket::OnSend(size_t len)noexcept
 
 void TcpSocket::OnRead(ObjectPool::BufferPtr buffer, size_t len)noexcept
 {
+    // 如果有回调函数，直接调用
+    if (m_stReadCallback)
+    {
+        MOE_UV_EAT_EXCEPT_BEGIN
+            MutableBytesView view(reinterpret_cast<uint8_t*>(buffer.get()), len);
+            m_stReadCallback(0, std::move(buffer), view);
+        MOE_UV_EAT_EXCEPT_END
+        return;
+    }
+
     QueueData data;
     data.Holder = std::move(buffer);
     data.View = MutableBytesView(reinterpret_cast<uint8_t*>(data.Holder.get()), len);
@@ -507,12 +672,12 @@ void TcpSocket::OnRead(ObjectPool::BufferPtr buffer, size_t len)noexcept
     // 数据已满，停止读操作
     if (m_stQueuedBuffer.IsFull())
     {
-        if (m_bReading)
+        if (m_eReadState == ReadState::Reading)
         {
             auto error = ::uv_read_stop(reinterpret_cast<::uv_stream_t*>(&m_stHandle));
             MOE_UNUSED(error);
             assert(error == 0);
-            m_bReading = false;
+            m_eReadState = ReadState::Pending;
         }
     }
 
@@ -522,10 +687,19 @@ void TcpSocket::OnRead(ObjectPool::BufferPtr buffer, size_t len)noexcept
 
 void TcpSocket::OnEof()noexcept
 {
-    m_bReading = false;
+    m_eReadState = ReadState::NotReading;
 
-    // 终止读句柄
-    m_stReadEvent.Cancel();
+    // 通知读操作结束
+    if (m_stReadCallback)
+    {
+        auto cb = std::move(m_stReadCallback);
+        MOE_UV_EAT_EXCEPT_BEGIN
+            cb(0, nullptr, MutableBytesView());
+        MOE_UV_EAT_EXCEPT_END
+        return;
+    }
+    else
+        m_stReadEvent.Cancel();
 }
 
 //////////////////////////////////////////////////////////////////////////////// TcpListener

@@ -328,7 +328,15 @@ void UdpSocket::OnClose()noexcept
     m_stReadCallback = nullptr;
 
     // 通知句柄退出
-    m_stReadEvent.Cancel();
+    if (m_stReadCallback)
+    {
+        auto cb = std::move(m_stReadCallback);
+        MOE_UV_EAT_EXCEPT_BEGIN
+            cb(0, EndPoint(), nullptr, 0u);
+        MOE_UV_EAT_EXCEPT_END
+    }
+    else
+        m_stReadEvent.Cancel();
 }
 
 void UdpSocket::OnError(int error)noexcept
@@ -342,8 +350,9 @@ void UdpSocket::OnError(int error)noexcept
     // 终止读操作
     if (m_stReadCallback)
     {
+        auto cb = std::move(m_stReadCallback);
         MOE_UV_EAT_EXCEPT_BEGIN
-            m_stReadCallback(error, EndPoint(), nullptr, 0u);
+            cb(error, EndPoint(), nullptr, 0u);
         MOE_UV_EAT_EXCEPT_END
     }
     else

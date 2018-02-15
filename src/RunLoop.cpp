@@ -39,9 +39,9 @@ void RunLoop::UVClosingHandleWalker(::uv_handle_t* handle, void* arg)noexcept
 {
     RunLoop* self = static_cast<RunLoop*>(arg);
 
-    if (handle == self->m_stPrepareHandle->GetHandle() ||
-        handle == self->m_stCheckHandle->GetHandle() ||
-        handle == self->m_stSchedulerTimeout->GetHandle())
+    if ((self->m_stPrepareHandle && handle == self->m_stPrepareHandle->GetHandle()) ||
+        (self->m_stCheckHandle && handle == self->m_stCheckHandle->GetHandle()) ||
+        (self->m_stSchedulerTimeout && handle == self->m_stSchedulerTimeout->GetHandle()))
     {
         // 忽略内部句柄
         return;
@@ -99,13 +99,29 @@ RunLoop::RunLoop(Time::Tick minimalTick, size_t coroutineSharedStackSize)
 
 RunLoop::~RunLoop()
 {
+    static const int kMaxLoopTimeout = 5000;
+
     m_bClosing = true;
 
     // 删除句柄
     m_stSchedulerTimeout.Clear();
     m_stCheckHandle.Clear();
     m_stPrepareHandle.Clear();
-    
+
+    // 关闭所有句柄
+    auto start = ::uv_now(&m_stLoop);
+    while (::uv_loop_alive(&m_stLoop))
+    {
+        ForceCloseAllHandle();
+        ::uv_run(&m_stLoop, UV_RUN_ONCE);
+
+        this_thread::yield();
+
+        auto now = ::uv_now(&m_stLoop);
+        if (now - start > kMaxLoopTimeout)
+            break;  // 超时N秒
+    }
+
     // 关闭Loop句柄
     int ret = ::uv_loop_close(&m_stLoop);
     if (ret != 0)
@@ -127,6 +143,7 @@ void RunLoop::Run()
     m_stCheckHandle->Start();
 
     // 开始程序循环
+    m_stSchedulerTimeout->Start(0);
     ::uv_run(&m_stLoop, UV_RUN_DEFAULT);
 
     // 终止句柄
