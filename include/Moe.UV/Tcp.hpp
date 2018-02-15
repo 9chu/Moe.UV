@@ -119,7 +119,7 @@ namespace UV
          * 当指定回调函数时，会通过回调函数通知数据包到来。
          * 当不指定回调函数时，数据包会被缓存到队列，此时可以通过协程读方法获取数据。
          */
-        void StartRead(const ReadCallbackType& callback);
+        void StartRead(const ReadCallbackType& callback=ReadCallbackType());
         void StartRead(ReadCallbackType&& callback);
 
         /**
@@ -234,6 +234,8 @@ namespace UV
         friend class ObjectPool;
 
     public:
+        using AcceptCallbackType = std::function<void(int, IoHandleHolder<TcpSocket>)>;
+
         /**
          * @brief 创建TCP监听器
          * @param address 地址
@@ -265,9 +267,11 @@ namespace UV
 
         /**
          * @brief 启动监听
+         * @param callback 回调函数
          * @param backlog 队列大小
          */
-        void Listen(int backlog=128);
+        void Listen(const AcceptCallbackType& callback=AcceptCallbackType(), int backlog=128);
+        void Listen(AcceptCallbackType&& callback, int backlog=128);
 
         /**
          * @brief （协程）等待并接受句柄
@@ -291,6 +295,9 @@ namespace UV
 
         // 协程
         CoEvent m_stAcceptEvent;  // 等待对象的协程
+
+        // 回调
+        AcceptCallbackType m_stAcceptCallback;
     };
 }
 }

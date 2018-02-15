@@ -763,18 +763,30 @@ void TcpListener::Bind(const EndPoint& address, bool ipv6Only)
     MOE_UV_CHECK(::uv_tcp_bind(&m_stHandle, reinterpret_cast<const sockaddr*>(&address.Storage), flags));
 }
 
-void TcpListener::Listen(int backlog)
+void TcpListener::Listen(const AcceptCallbackType& callback, int backlog)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
 
     MOE_UV_CHECK(::uv_listen(reinterpret_cast<::uv_stream_t*>(&m_stHandle), backlog, OnUVNewConnection));
+    m_stAcceptCallback = callback;
+}
+
+void TcpListener::Listen(AcceptCallbackType&& callback, int backlog)
+{
+    if (IsClosing())
+        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+
+    MOE_UV_CHECK(::uv_listen(reinterpret_cast<::uv_stream_t*>(&m_stHandle), backlog, OnUVNewConnection));
+    m_stAcceptCallback = std::move(callback);
 }
 
 IoHandleHolder<TcpSocket> TcpListener::CoAccept(Time::Tick timeout)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    if (m_stAcceptCallback)
+        MOE_THROW(InvalidCallException, "Already set callback");
 
     int ret = UV_EAGAIN;
     auto socket = TcpSocket::Create();
@@ -789,8 +801,8 @@ IoHandleHolder<TcpSocket> TcpListener::CoAccept(Time::Tick timeout)
             MOE_UV_THROW(ret);
 
         // 等待协程
-        auto ret = m_stAcceptEvent.Wait(timeout);
-        if (ret != CoEvent::WaitResult::Succeed)
+        auto waitResult = m_stAcceptEvent.Wait(timeout);
+        if (waitResult != CoEvent::WaitResult::Succeed)
             return IoHandleHolder<TcpSocket>();
     }
 
@@ -819,18 +831,39 @@ void TcpListener::OnError(int error)noexcept
     // 关闭连接
     Close();
 
-    // 终止读句柄
-    try
+    // 终止句柄
+    if (m_stAcceptCallback)
     {
-        MOE_UV_THROW(error);
+        auto cb = std::move(m_stAcceptCallback);
+        MOE_UV_EAT_EXCEPT_BEGIN
+            cb(error, IoHandleHolder<TcpSocket>());
+        MOE_UV_EAT_EXCEPT_END
     }
-    catch (...)
+    else
     {
-        m_stAcceptEvent.Throw(current_exception());
+        try
+        {
+            MOE_UV_THROW(error);
+        }
+        catch (...)
+        {
+            m_stAcceptEvent.Throw(current_exception());
+        }
     }
 }
 
 void TcpListener::OnNewConnection()noexcept
 {
+    if (m_stAcceptCallback)
+    {
+        MOE_UV_EAT_EXCEPT_BEGIN
+            auto socket = TcpSocket::Create();
+            int err = ::uv_accept(reinterpret_cast<::uv_stream_t*>(&m_stHandle),
+                reinterpret_cast<::uv_stream_t*>(&socket->m_stHandle));
+            m_stAcceptCallback(err, std::move(socket));
+        MOE_UV_EAT_EXCEPT_END
+        return;
+    }
+
     m_stAcceptEvent.Resume();
 }
