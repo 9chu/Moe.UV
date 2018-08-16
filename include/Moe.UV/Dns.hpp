@@ -4,10 +4,11 @@
  * @date 2017/12/2
  */
 #pragma once
-#include "IoHandle.hpp"
+#include "AsyncHandle.hpp"
 #include "EndPoint.hpp"
 
 #include <vector>
+#include <functional>
 
 namespace moe
 {
@@ -19,59 +20,41 @@ namespace UV
     class Dns
     {
     public:
+        using OnResolveCallbackType = std::function<void(uv_errno_t, const EndPoint&)>;
+        using OnResolveAllCallbackType = std::function<void(uv_errno_t, const std::vector<EndPoint>&)>;
+        // (status, hostname, service)
+        using OnReverseResolveCallbackType = std::function<void(uv_errno_t, const std::string&, const std::string&)>;
+
         /**
-         * @brief （协程）解析地址
-         * @exception InvalidCallException 调用无效时抛出
-         * @exception OperationCancelledException 调用被取消时抛出
-         * @exception APIException API错误时抛出
+         * @brief 解析地址
          * @param hostname 待解析主机名
-         * @return 解析结果
+         * @param cb 回调函数
          *
-         * 只能被协程调用。
          * 必须有RunLoop才能调用。
          * 方法选取首个解析的地址。
          */
-        static EndPoint CoResolve(const char* hostname);
+        static void Resolve(const char* hostname, const OnResolveCallbackType& cb);
+        static void Resolve(const char* hostname, OnResolveCallbackType&& cb);
 
         /**
-         * @brief （协程）解析地址
-         * @exception InvalidCallException 调用无效时抛出
-         * @exception OperationCancelledException 调用被取消时抛出
-         * @exception APIException API错误时抛出
-         * @param[out] out 输出地址，此处复用EndPoint结构，其中端口总是为0
+         * @brief 解析地址
          * @param hostname 待解析主机名
+         * @param cb 回调函数
          *
-         * 只能被协程调用。
          * 必须有RunLoop才能调用。
          */
-        static void CoResolve(std::vector<EndPoint>& out, const char* hostname);
+        static void ResolveAll(const char* hostname, const OnResolveAllCallbackType& cb);
+        static void ResolveAll(const char* hostname, OnResolveAllCallbackType&& cb);
 
         /**
-         * @brief （协程）反向解析地址
-         * @exception InvalidCallException 调用无效时抛出
-         * @exception OperationCancelledException 调用被取消时抛出
-         * @exception APIException API错误时抛出
-         * @param ip 待解析IP，此处复用EndPoint结构，忽略端口
-         * @param[out] hostname 地址
+         * @brief 反向解析地址
+         * @param address 待解析IP，此处复用EndPoint结构，忽略端口
+         * @param cb 回调函数
          *
-         * 只能被协程调用。
          * 必须有RunLoop才能调用。
          */
-        static void CoReverse(const EndPoint& address, std::string& hostname);
-
-        /**
-         * @brief （协程）反向解析地址
-         * @exception InvalidCallException 调用无效时抛出
-         * @exception OperationCancelledException 调用被取消时抛出
-         * @exception APIException API错误时抛出
-         * @param ip 待解析IP，此处复用EndPoint结构，忽略端口
-         * @param[out] hostname 地址
-         * @param[out] service 服务
-         *
-         * 只能被协程调用。
-         * 必须有RunLoop才能调用。
-         */
-        static void CoReverse(const EndPoint& address, std::string& hostname, std::string& service);
+        static void ReverseResolve(const EndPoint& address, const OnReverseResolveCallbackType& cb);
+        static void ReverseResolve(const EndPoint& address, OnReverseResolveCallbackType&& cb);
     };
 }
 }

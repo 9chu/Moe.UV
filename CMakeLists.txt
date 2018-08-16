@@ -10,13 +10,12 @@ if(NOT TARGET MoeCoroutine)
     add_subdirectory(3rd/Moe.Coroutine)
 endif()
 
-if(NOT TARGET uv)
+if(NOT TARGET uv_a)
     add_subdirectory(3rd/libuv)
 endif()
 
 # 编译选项
 set(CMAKE_CXX_STANDARD 11)
-
 if(MSVC)
     add_definitions(-D_WIN32_WINNT=0x0600 -D_GNU_SOURCE -D_CRT_SECURE_NO_WARNINGS)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /utf-8")
@@ -30,5 +29,5 @@ endif()
 file(GLOB_RECURSE MOE_UV_SRC src/*.cpp include/*.hpp)
 
 add_library(MoeUV STATIC ${MOE_UV_SRC})
-target_link_libraries(MoeUV MoeCore MoeCoroutine uv)
+target_link_libraries(MoeUV MoeCore MoeCoroutine uv_a)
 target_include_directories(MoeUV PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")

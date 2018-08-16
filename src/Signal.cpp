@@ -1,85 +1,72 @@
 /**
  * @file
  * @author chu
- * @date 2017/12/27
+ * @date 2018/8/13
  */
 #include <Moe.UV/Signal.hpp>
+
+#include <Moe.Core/Logging.hpp>
+#include <Moe.UV/RunLoop.hpp>
 
 using namespace std;
 using namespace moe;
 using namespace UV;
 
-IoHandleHolder<Signal> Signal::Create()
+//////////////////////////////////////////////////////////////////////////////// SignalBase
+
+void SignalBase::OnUVSignal(::uv_signal_t* handle, int signum)noexcept
 {
-    return IoHandleHolder<Signal>(ObjectPool::Create<Signal>());
+    auto* self = GetSelf<SignalBase>(handle);
+
+    MOE_UV_CATCH_ALL_BEGIN
+        self->OnSignal(signum);
+    MOE_UV_CATCH_ALL_END
 }
 
-void Signal::OnUVSignal(uv_signal_t* handle, int signum)noexcept
-{
-    auto* self = GetSelf<Signal>(handle);
-    self->OnSignal(signum);
-}
-
-Signal::Signal()
+SignalBase::SignalBase()
 {
     MOE_UV_CHECK(::uv_signal_init(GetCurrentUVLoop(), &m_stHandle));
     BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
 }
 
-void Signal::Start(int signum)
+void SignalBase::Start(int signum)
 {
     if (IsClosing())
         MOE_THROW(InvalidCallException, "Signal is already closed");
     MOE_UV_CHECK(::uv_signal_start(&m_stHandle, OnUVSignal, signum));
-    m_iWatchedSignum = signum;
 }
 
-bool Signal::Stop()noexcept
+bool SignalBase::Stop()noexcept
 {
     if (IsClosing())
         return false;
-    auto ret = ::uv_signal_stop(&m_stHandle);
-    if (ret == 0)
-    {
-        // 通知协程取消
-        CancelWait();
-        return true;
-    }
-    return false;
+    return ::uv_signal_stop(&m_stHandle) == 0;
 }
 
-bool Signal::CoWait(Time::Tick timeout)
+//////////////////////////////////////////////////////////////////////////////// Signal
+
+UniqueAsyncHandlePtr<Signal> Signal::Create()
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Signal is already closed");
-    
-    auto self = RefFromThis();  // 此时持有一个强引用，这意味着必须由外部事件强制触发，否则不会释放
-    return m_stSignalEvent.Wait(timeout) == CoEvent::WaitResult::Succeed;
+    MOE_UV_NEW(Signal);
+    return object;
 }
 
-void Signal::CancelWait()noexcept
+UniqueAsyncHandlePtr<Signal> Signal::Create(const OnSignalCallbackType& callback)
 {
-    // 通知协程取消
-    m_stSignalEvent.Cancel();
+    MOE_UV_NEW(Signal);
+    object->SetOnSignalCallback(callback);
+    return object;
 }
 
-void Signal::OnClose()noexcept
+UniqueAsyncHandlePtr<Signal> Signal::Create(OnSignalCallbackType&& callback)
 {
-    IoHandle::OnClose();
-
-    // 通知协程取消
-    CancelWait();
+    MOE_UV_NEW(Signal);
+    object->SetOnSignalCallback(std::move(callback));
+    return object;
 }
 
-void Signal::OnSignal(int signum)noexcept
+void Signal::OnSignal(int signum)
 {
-    if (m_iWatchedSignum == signum)
-        m_stSignalEvent.Resume();
-
-    if (m_stCallback)
-    {
-        MOE_UV_EAT_EXCEPT_BEGIN
-            m_stCallback(signum);
-        MOE_UV_EAT_EXCEPT_END
-    }
+    if (m_pOnSignal)
+        m_pOnSignal(signum);
 }
