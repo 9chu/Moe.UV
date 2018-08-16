@@ -6,7 +6,9 @@
 #include <Moe.UV/EndPoint.hpp>
 #include <Moe.Core/Exception.hpp>
 
+#include <cmath>
 #include <cerrno>
+#include <algorithm>
 
 using namespace std;
 using namespace moe;
@@ -14,242 +16,394 @@ using namespace UV;
 
 namespace
 {
-    static const size_t kMaxIpv4AddressLen = sizeof("255.255.255.255");
-    static const size_t kMaxIpv6AddressLen = sizeof("ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255");
-    static_assert(INET_ADDRSTRLEN >= kMaxIpv4AddressLen, "Bad system api");
-    static_assert(INET6_ADDRSTRLEN >= kMaxIpv6AddressLen, "Bad system api");
-
-    void InetNtop4(const ::in_addr* addr, char* dst, size_t size)
+    /**
+     * @brief 解析IPV4中的数字（十进制、十六进制、八进制）
+     */
+    bool ParseIpv4Number(uint64_t& result, const char* start, const char* end)noexcept
     {
-        static const char kFormat[128] = "%u.%u.%u.%u";
-
-        if (addr == nullptr || dst == nullptr)
-            MOE_THROW(BadArgumentException, "Invalid argument");
-
-        const uint8_t* src = reinterpret_cast<const uint8_t*>(addr);
-        char buffer[kMaxIpv4AddressLen];
-        std::sprintf(buffer, kFormat, src[0], src[1], src[2], src[3]);
-
-        if (size > 0)
+        unsigned radix = 10;
+        if (end - start >= 2)
         {
-            ::strncpy(dst, buffer, size);
-            dst[size - 1] = '\0';
-        }
-    }
-
-    void InetNtop6(const in6_addr* addr, char* dst, size_t size)
-    {
-        const uint8_t* src = reinterpret_cast<const uint8_t*>(addr);
-        char buffer[kMaxIpv6AddressLen], *tp;
-        struct {
-            int base, len;
-        } best, cur;
-
-        if (addr == nullptr || dst == nullptr)
-            MOE_THROW(BadArgumentException, "Invalid argument");
-
-        u_int words[8];
-        ::memset(words, '\0', sizeof(words));
-        for (int i = 0; i < 16; ++i)
-            words[i / 2] |= (src[i] << ((1 - (i % 2)) << 3));
-
-        best.base = -1;
-        best.len = 0;
-        cur.base = -1;
-        cur.len = 0;
-        for (int i = 0; i < 8; ++i)
-        {
-            if (words[i] == 0)
+            if (start[0] == '0' && (start[1] == 'x' || start[1] == 'X'))  // 16进制
             {
-                if (cur.base == -1)
-                    cur.base = i, cur.len = 1;
-                else
-                    cur.len++;
+                start += 2;
+                radix = 16;
+            }
+            else if (start[0] == '0')  // 8进制
+            {
+                start += 1;
+                radix = 8;
+            }
+        }
+
+        result = 0;
+        if (start >= end)
+            return true;
+
+        while (start < end)
+        {
+            char ch = *(start++);
+
+            if (ch >= 'a' && ch <= 'f')
+            {
+                if (radix != 16)
+                    return false;
+                if (result != numeric_limits<uint64_t>::max())
+                    result = result * 16 + (ch - 'a') + 10;
+            }
+            else if (ch >= 'A' && ch <= 'F')
+            {
+                if (radix != 16)
+                    return false;
+                if (result != numeric_limits<uint64_t>::max())
+                    result = result * 16 + (ch - 'A') + 10;
+            }
+            else if (ch >= '0' && ch <= '9')
+            {
+                if ((ch == '8' || ch == '9') && radix == 8)
+                    return false;
+                if (result != numeric_limits<uint64_t>::max())
+                    result = result * radix + (ch - '0');
             }
             else
-            {
-                if (cur.base != -1)
-                {
-                    if (best.base == -1 || cur.len > best.len)
-                        best = cur;
-                    cur.base = -1;
-                }
-            }
-        }
-        if (cur.base != -1)
-        {
-            if (best.base == -1 || cur.len > best.len)
-                best = cur;
-        }
-        if (best.base != -1 && best.len < 2)
-            best.base = -1;
+                return false;
 
-        tp = buffer;
-        for (int i = 0; i < 8; ++i)
+            if (result > numeric_limits<uint32_t>::max())
+                result = numeric_limits<uint64_t>::max();
+        }
+        return true;
+    }
+
+    bool ParseIpv4(uint32_t& out, const char* start, const char* end)
+    {
+        auto input = start;
+        auto mark = start;
+        unsigned parts = 0;
+        unsigned tooBigParts = 0;
+        uint64_t numbers[4] = { 0, 0, 0, 0 };
+
+        while (start <= end)
         {
-            if (best.base != -1 && i >= best.base && i < (best.base + best.len))
+            auto ch = static_cast<char>(start < end ? *start : '\0');
+            if (ch == '.' || ch == '\0')
             {
-                if (i == best.base)
-                    *tp++ = ':';
+                if (++parts > 4)
+                    return false;  // IPV4地址至多只有4个部分
+                if (start == mark)
+                    return false;  // 无效的空的点分部分
+
+                // 解析[mark, start)部分的数字
+                uint64_t n = 0;
+                if (!ParseIpv4Number(n, mark, start))
+                    return false;
+                if (n > 255)
+                    ++tooBigParts;
+
+                numbers[parts - 1] = n;
+                mark = start + 1;
+                if (ch == '.' && start + 1 >= end)
+                    break;  // 允许输入的最后一个字符是'.'
+            }
+            ++start;
+        }
+        assert(parts > 0);
+
+        if (tooBigParts > 1 || (tooBigParts == 1 && numbers[parts - 1] <= 255) ||
+            numbers[parts - 1] >= std::pow(256, static_cast<double>(5 - parts)))
+        {
+            // 规范要求每个点分部分不能超过255，但是最后一个元素例外
+            // 此外，整个IPV4的解析结果也要保证不能溢出
+            MOE_THROW(BadFormatException, "Bad Ipv4 string: {0}", string(input, end));
+        }
+
+        // 计算IPV4值
+        auto val = numbers[parts - 1];
+        for (unsigned n = 0; n < parts - 1; ++n)
+        {
+            double b = 3 - n;
+            val += static_cast<uint64_t>(numbers[n] * std::pow(256, b));
+        }
+        out = static_cast<uint32_t>(val);
+        return true;
+    }
+
+    bool ParseIpv6(EndPoint::Ipv6AddressType& address, const char* start, const char* end)noexcept
+    {
+        auto ch = static_cast<char>(start < end ? *start : '\0');
+        unsigned current = 0;  // 指示当前解析的部分
+        uint32_t compress = 0xFFFFFFFFu;  // 指示压缩可扩充的位置
+
+        address.fill(0);
+
+        // 压缩的case '::xxxx'
+        if (ch == ':')
+        {
+            if (end - start < 2 || start[1] != ':')
+                return false;  // 无效的':
+            start += 2;
+            ch = static_cast<char>(start < end ? *start : '\0');
+            ++current;
+            compress = current;
+        }
+
+        while (ch != '\0')
+        {
+            if (current >= address.max_size())
+                return false;  // 无效的地址（至多8个部分）
+
+            // 压缩的case 'fe80::xxxxx'
+            if (ch == ':')
+            {
+                if (compress != 0xFFFFFFFFu)
+                    return false;  // 不可能同时存在两个压缩部分
+                ++start;
+                ch = static_cast<char>(start < end ? *start : '\0');
+                address[current++] = 0;
+                compress = current;
                 continue;
             }
-            if (i != 0)
-                *tp++ = ':';
-            if (i == 6 && best.base == 0 && (best.len == 6 || (best.len == 7 && words[7] != 0x0001) ||
-                (best.len == 5 && words[5] == 0xffff)))
+
+            uint32_t value = 0;
+            unsigned len = 0;
+            while (len < 4 && StringUtils::IsHexDigit(ch))
             {
-                InetNtop4(reinterpret_cast<const in_addr*>(src + 12), tp, sizeof(buffer) - (tp - buffer));
-                tp += ::strlen(tp);
-                break;
+                value = value * 16 + StringUtils::HexDigitToNumber(ch);
+
+                ++start;
+                ch = static_cast<char>(start < end ? *start : '\0');
+                ++len;
             }
-            tp += std::sprintf(tp, "%x", words[i]);
-        }
-        if (best.base != -1 && (best.base + best.len) == CountOf(words))
-            *tp++ = ':';
-        *tp++ = '\0';
 
-        if (size > 0)
-        {
-            ::strncpy(dst, buffer, size);
-            dst[size - 1] = '\0';
-        }
-    }
-}
-
-const EndPoint EndPoint::Empty = EndPoint();
-
-EndPoint EndPoint::FromIpv4(uint32_t addr, uint16_t port)noexcept
-{
-    ::sockaddr_in zero;
-    ::memset(&zero, 0, sizeof(zero));
-    zero.sin_family = AF_INET;
-    zero.sin_port = htons(port);
-#ifdef MOE_WINDOWS
-    zero.sin_addr.S_un.S_addr = htonl(addr);
-#else
-    zero.sin_addr.s_addr = htonl(addr);
-#endif
-
-    return EndPoint(zero);
-}
-
-EndPoint EndPoint::FromIpv4(const Ipv4Address& addr, uint16_t port)noexcept
-{
-    uint32_t caddr = (std::get<0>(addr) << 24) | (std::get<1>(addr) << 16) | (std::get<2>(addr) << 8) |
-        (std::get<3>(addr));
-
-    ::sockaddr_in zero;
-    ::memset(&zero, 0, sizeof(zero));
-    zero.sin_family = AF_INET;
-    zero.sin_port = htons(port);
-#ifdef MOE_WINDOWS
-    zero.sin_addr.S_un.S_addr = htonl(caddr);
-#else
-    zero.sin_addr.s_addr = htonl(caddr);
-#endif
-
-    return EndPoint(zero);
-}
-
-EndPoint EndPoint::FromIpv4(const char* addr, uint16_t port)
-{
-    ::sockaddr_in zero;
-    ::memset(&zero, 0, sizeof(zero));
-    zero.sin_family = AF_INET;
-    zero.sin_port = htons(port);
-
-    char ch = '\0';
-    int octets = 0;
-    bool sawDigit = false;
-#ifdef MOE_WINDOWS
-    uint8_t* tp = reinterpret_cast<uint8_t*>(&zero.sin_addr.S_un.S_addr);
-#else
-    uint8_t* tp = reinterpret_cast<uint8_t*>(&zero.sin_addr.s_addr);
-#endif
-    while ((ch = *(addr++)) != '\0')
-    {
-        if (ch >= '0' && ch <= '9')
-        {
-            unsigned int nw = *tp * 10 + static_cast<unsigned>(ch - '0');
-            if (sawDigit && *tp == 0)
-                MOE_THROW(BadFormatException, "Invalid ipv4 address");
-            if (nw > 255)
-                MOE_THROW(BadFormatException, "Invalid ipv4 address");
-            *tp = static_cast<uint8_t>(nw);
-
-            if (!sawDigit)
+            switch (ch)
             {
-                if (++octets > 4)
-                    MOE_THROW(BadFormatException, "Invalid ipv4 address");
-                sawDigit = 1;
+                case '.':  // 内嵌IPV4地址
+                    if (len == 0)
+                        return false;
+                    start -= len;  // 回退
+                    ch = static_cast<char>(start < end ? *start : '\0');
+                    if (current > address.max_size() - 2)  // IPV4地址占两个Piece
+                        return false;
+
+                    // 解析IPV4部分（这一地址只允许使用十进制点分结构）
+                    {
+                        unsigned numbers = 0;
+                        while (ch != '\0')
+                        {
+                            value = 0xFFFFFFFF;
+                            if (numbers > 0)
+                            {
+                                if (ch == '.' && numbers < 4)
+                                {
+                                    ++start;
+                                    ch = static_cast<char>(start < end ? *start : '\0');
+                                }
+                                else
+                                    return false;
+                            }
+                            if (!StringUtils::IsDigit(ch))
+                                return false;
+                            while (StringUtils::IsDigit(ch))
+                            {
+                                auto number = static_cast<unsigned>(ch - '0');
+                                if (value == 0xFFFFFFFF)
+                                    value = number;
+                                else if (value == 0)
+                                    return false;
+                                else
+                                    value = value * 10 + number;
+                                if (value > 255)
+                                    return false;
+                                ++start;
+                                ch = static_cast<char>(start < end ? *start : '\0');
+                            }
+                            address[current] = static_cast<uint16_t>(address[current] * 0x100 + value);
+                            ++numbers;
+                            if (numbers == 2 || numbers == 4)
+                                ++current;
+                        }
+                        if (numbers != 4)
+                            return false;
+                    }
+                    continue;
+                case ':':
+                    ++start;
+                    ch = static_cast<char>(start < end ? *start : '\0');
+                    if (ch == '\0')
+                        return false;
+                    break;
+                case '\0':
+                    break;
+                default:
+                    return false;
+            }
+            address[current] = static_cast<uint16_t>(value);
+            ++current;
+        }
+
+        if (compress != 0xFFFFFFFFu)
+        {
+            auto swaps = current - compress;
+            current = static_cast<unsigned>(address.max_size() - 1);
+            while (current != 0 && swaps > 0)
+            {
+                auto swap = compress + swaps - 1;
+                std::swap(address[current], address[swap]);
+                --current;
+                --swaps;
             }
         }
-        else if (ch == '.' && sawDigit)
-        {
-            if (octets == 4)
-                MOE_THROW(BadFormatException, "Invalid ipv4 address");
-            *(++tp) = 0;
-            sawDigit = 0;
-        }
-        else
-            MOE_THROW(BadFormatException, "Invalid ipv4 address");
+        else if (current != address.max_size())  // 没有压缩，则必然读取了所有的部分
+            return false;
+        return true;
     }
-    if (octets < 4)
-        MOE_THROW(BadFormatException, "Invalid ipv4 address");
-
-    return EndPoint(zero);
 }
 
 EndPoint::EndPoint()noexcept
 {
-    ::sockaddr_in zero;
-    ::memset(&zero, 0, sizeof(zero));
-    zero.sin_family = AF_INET;
-    zero.sin_port = 0;
+    ::sockaddr_in v4 {};
+    memset(&v4, 0, sizeof(v4));
+    v4.sin_family = AF_INET;
+    v4.sin_port = 0;
 #ifdef MOE_WINDOWS
-    zero.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+    v4.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
 #else
-    zero.sin_addr.s_addr = htonl(INADDR_ANY);
+    v4.sin_addr.s_addr = htonl(INADDR_ANY);
 #endif
-
-    ::memcpy(&Storage, &zero, sizeof(zero));
+    memcpy(&Storage, &v4, sizeof(v4));
 }
 
 EndPoint::EndPoint(const ::sockaddr_in& ipv4)noexcept
 {
     assert(ipv4.sin_family == AF_INET);
-
-    ::memcpy(&Storage, &ipv4, sizeof(ipv4));
+    memcpy(&Storage, &ipv4, sizeof(ipv4));
 }
 
 EndPoint::EndPoint(const ::sockaddr_in6& ipv6)noexcept
 {
     assert(ipv6.sin6_family == AF_INET6);
-
-    ::memcpy(&Storage, &ipv6, sizeof(ipv6));
+    memcpy(&Storage, &ipv6, sizeof(ipv6));
 }
 
 EndPoint::EndPoint(const ::sockaddr_storage& storage)noexcept
-    : Storage(storage)
 {
     assert(storage.ss_family == AF_INET || storage.ss_family == AF_INET6);
+    memcpy(&Storage, &storage, sizeof(storage));
 }
 
-bool EndPoint::operator==(const EndPoint& rhs)const
+EndPoint::EndPoint(uint32_t addr, uint16_t port)noexcept
+{
+    ::sockaddr_in v4 {};
+    memset(&v4, 0, sizeof(v4));
+    v4.sin_family = AF_INET;
+    v4.sin_port = htons(port);
+#ifdef MOE_WINDOWS
+    v4.sin_addr.S_un.S_addr = htonl(addr);
+#else
+    v4.sin_addr.s_addr = htonl(addr);
+#endif
+    memcpy(&Storage, &v4, sizeof(v4));
+}
+
+EndPoint::EndPoint(const Ipv4AddressType& addr, uint16_t port)noexcept
+{
+    uint32_t caddr = (addr[0] << 24) | (addr[1] << 16) | (addr[2] << 8) | addr[3];
+
+    ::sockaddr_in v4 {};
+    memset(&v4, 0, sizeof(v4));
+    v4.sin_family = AF_INET;
+    v4.sin_port = htons(port);
+#ifdef MOE_WINDOWS
+    v4.sin_addr.S_un.S_addr = htonl(caddr);
+#else
+    v4.sin_addr.s_addr = htonl(caddr);
+#endif
+    memcpy(&Storage, &v4, sizeof(v4));
+}
+
+EndPoint::EndPoint(const Ipv6AddressType& addr, uint16_t port)noexcept
+{
+    ::sockaddr_in6 v6 {};
+    memset(&v6, 0, sizeof(v6));
+    v6.sin6_family = AF_INET6;
+    v6.sin6_port = htons(port);
+#ifdef MOE_WINDOWS
+    auto* b = v6.sin6_addr.u.Byte;
+#else
+    auto* b = v6.sin6_addr.s6_addr;
+#endif
+    for (auto it = addr.begin(); it != addr.end(); ++it)
+    {
+        auto s = *it;
+        auto hi = static_cast<uint8_t>((s >> 8) & 0xFF);
+        auto lo = static_cast<uint8_t>(s & 0xFF);
+        *(b++) = hi;
+        *(b++) = lo;
+    }
+}
+
+EndPoint::EndPoint(const char* addr, uint16_t port)
+{
+    ::sockaddr_in v4 {};
+    memset(&v4, 0, sizeof(v4));
+    v4.sin_family = AF_INET;
+    v4.sin_port = htons(port);
+#ifdef MOE_WINDOWS
+    v4.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+#else
+    v4.sin_addr.s_addr = htonl(INADDR_ANY);
+#endif
+    memcpy(&Storage, &v4, sizeof(v4));
+
+    SetAddress(addr);
+}
+
+EndPoint::EndPoint(const std::string& addr, uint16_t port)
+{
+    ::sockaddr_in v4 {};
+    memset(&v4, 0, sizeof(v4));
+    v4.sin_family = AF_INET;
+    v4.sin_port = htons(port);
+#ifdef MOE_WINDOWS
+    v4.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+#else
+    v4.sin_addr.s_addr = htonl(INADDR_ANY);
+#endif
+    memcpy(&Storage, &v4, sizeof(v4));
+
+    SetAddress(addr);
+}
+
+EndPoint::EndPoint(ArrayView<char> addr, uint16_t port)
+{
+    ::sockaddr_in v4 {};
+    memset(&v4, 0, sizeof(v4));
+    v4.sin_family = AF_INET;
+    v4.sin_port = htons(port);
+#ifdef MOE_WINDOWS
+    v4.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+#else
+    v4.sin_addr.s_addr = htonl(INADDR_ANY);
+#endif
+    memcpy(&Storage, &v4, sizeof(v4));
+
+    SetAddress(addr);
+}
+
+bool EndPoint::operator==(const EndPoint& rhs)const noexcept
 {
     if (Storage.ss_family != rhs.Storage.ss_family)
         return false;
 
     if (Storage.ss_family == AF_INET)
-        return ::memcmp(&Storage, &rhs.Storage, sizeof(::sockaddr_in)) == 0;
+        return memcmp(&Storage, &rhs.Storage, sizeof(::sockaddr_in)) == 0;
     if (Storage.ss_family == AF_INET6)
-        return ::memcmp(&Storage, &rhs.Storage, sizeof(::sockaddr_in6)) == 0;
+        return memcmp(&Storage, &rhs.Storage, sizeof(::sockaddr_in6)) == 0;
 
     assert(false);
-    return ::memcmp(&Storage, &rhs.Storage, sizeof(Storage)) == 0;
+    return memcmp(&Storage, &rhs.Storage, sizeof(Storage)) == 0;
 }
 
-bool EndPoint::operator!=(const EndPoint& rhs)const
+bool EndPoint::operator!=(const EndPoint& rhs)const noexcept
 {
     return !this->operator==(rhs);
 }
@@ -264,75 +418,245 @@ bool EndPoint::IsIpv6()const noexcept
     return Storage.ss_family == AF_INET6;
 }
 
+std::string EndPoint::GetAddress()const
+{
+    string ret;
+
+    if (Storage.ss_family == AF_INET)
+    {
+        auto v4 = GetAddressIpv4();
+
+        ret.reserve(15);
+        for (uint32_t value = v4, n = 0; n < 4; n++)
+        {
+            char buf[4];
+            Convert::ToDecimalString(static_cast<uint8_t>(value % 256), buf);
+
+            ret.insert(0, buf);
+            if (n < 3)
+                ret.insert(0, 1, '.');
+            value /= 256;
+        }
+    }
+    else if (Storage.ss_family == AF_INET6)
+    {
+        Ipv6AddressType v6;
+        GetAddressIpv6(v6);
+
+        uint32_t start = 0;
+        uint32_t compress = 0xFFFFFFFFu;
+
+        ret.reserve(41);
+        ret.push_back('[');
+
+        // 找到最长的0的部分
+        uint32_t cur = 0xFFFFFFFFu, count = 0, longest = 0;
+        while (start < 8)
+        {
+            if (v6[start] == 0)
+            {
+                if (cur == 0xFFFFFFFFu)
+                    cur = start;
+                ++count;
+            }
+            else
+            {
+                if (count > longest && count > 1)
+                {
+                    longest = count;
+                    compress = cur;
+                }
+                count = 0;
+                cur = 0xFFFFFFFFu;
+            }
+            ++start;
+        }
+        if (count > longest && count > 1)
+            compress = cur;
+
+        // 序列化过程
+        bool ignore0 = false;
+        for (unsigned n = 0; n < 8; ++n)
+        {
+            auto piece = v6[n];
+            if (ignore0 && piece == 0)
+                continue;
+            else if (ignore0)
+                ignore0 = false;
+            if (compress == n)
+            {
+                ret.append(n == 0 ? "::" : ":");
+                ignore0 = true;
+                continue;
+            }
+
+            char buf[5];
+            Convert::ToHexStringLower(piece, buf);
+            ret.append(buf);
+            if (n < 7)
+                ret.push_back(':');
+        }
+
+        ret.push_back(']');
+    }
+    return ret;
+}
+
+EndPoint& EndPoint::SetAddress(const char* addr)
+{
+    return SetAddress(ArrayView<char>(addr, strlen(addr)));
+}
+
+EndPoint& EndPoint::SetAddress(const std::string& addr)
+{
+    return SetAddress(ArrayView<char>(addr.c_str(), addr.length()));
+}
+
+EndPoint& EndPoint::SetAddress(ArrayView<char> addr)
+{
+    uint32_t v4 = 0;
+    if (ParseIpv4(v4, addr.GetBuffer(), addr.GetBuffer() + addr.GetSize()))
+        SetAddressIpv4(v4);
+    else
+    {
+        Ipv6AddressType v6;
+        if (!ParseIpv6(v6, addr.GetBuffer(), addr.GetBuffer() + addr.GetSize()))
+            MOE_THROW(BadFormatException, "Bad address {0}", addr);
+        SetAddressIpv6(v6);
+    }
+    return *this;
+}
+
+uint32_t EndPoint::GetAddressIpv4()const noexcept
+{
+    assert(Storage.ss_family == AF_INET);
+    if (Storage.ss_family != AF_INET)
+        return 0;
+
+    auto real = reinterpret_cast<const ::sockaddr_in*>(&Storage);
+#ifdef MOE_WINDOWS
+    return ntohl(real->sin_addr.S_un.S_addr);
+#else
+    return ntohl(real->sin_addr.s_addr);
+#endif
+}
+
+void EndPoint::GetAddressIpv4(Ipv4AddressType& addr)const noexcept
+{
+    auto v4 = GetAddressIpv4();
+    addr[0] = static_cast<uint8_t>((v4 & 0xFF000000) >> 24);
+    addr[1] = static_cast<uint8_t>((v4 & 0xFF0000) >> 16);
+    addr[2] = static_cast<uint8_t>((v4 & 0xFF00) >> 8);
+    addr[3] = static_cast<uint8_t>(v4 & 0xFF);
+}
+
+EndPoint& EndPoint::SetAddressIpv4(uint32_t addr)noexcept
+{
+    auto port = GetPort();
+
+    ::sockaddr_in v4 {};
+    memset(&v4, 0, sizeof(v4));
+    v4.sin_family = AF_INET;
+    v4.sin_port = htons(port);
+#ifdef MOE_WINDOWS
+    v4.sin_addr.S_un.S_addr = htonl(addr);
+#else
+    v4.sin_addr.s_addr = htonl(addr);
+#endif
+    memcpy(&Storage, &v4, sizeof(v4));
+    return *this;
+}
+
+EndPoint& EndPoint::SetAddressIpv4(const Ipv4AddressType& addr)noexcept
+{
+    auto port = GetPort();
+    uint32_t caddr = (addr[0] << 24) | (addr[1] << 16) | (addr[2] << 8) | addr[3];
+
+    ::sockaddr_in v4 {};
+    memset(&v4, 0, sizeof(v4));
+    v4.sin_family = AF_INET;
+    v4.sin_port = htons(port);
+#ifdef MOE_WINDOWS
+    v4.sin_addr.S_un.S_addr = htonl(caddr);
+#else
+    v4.sin_addr.s_addr = htonl(caddr);
+#endif
+    memcpy(&Storage, &v4, sizeof(v4));
+    return *this;
+}
+
+void EndPoint::GetAddressIpv6(Ipv6AddressType& addr)const noexcept
+{
+    assert(Storage.ss_family == AF_INET6);
+    if (Storage.ss_family != AF_INET6)
+    {
+        addr.fill(0);
+        return;
+    }
+
+    auto real = reinterpret_cast<const ::sockaddr_in6*>(&Storage);
+#ifdef MOE_WINDOWS
+    const auto* b = real->sin6_addr.u.Byte;
+#else
+    const auto* b = real->sin6_addr.s6_addr;
+#endif
+    for (auto it = addr.begin(); it != addr.end(); ++it)
+    {
+        uint16_t x = (*(b++)) << 8;
+        x |= *(b++);
+        *it = x;
+    }
+}
+
+EndPoint& EndPoint::SetAddressIpv6(const Ipv6AddressType& addr)noexcept
+{
+    auto port = GetPort();
+
+    ::sockaddr_in6 v6 {};
+    memset(&v6, 0, sizeof(v6));
+    v6.sin6_family = AF_INET6;
+    v6.sin6_port = htons(port);
+#ifdef MOE_WINDOWS
+    auto* b = v6.sin6_addr.u.Byte;
+#else
+    auto* b = v6.sin6_addr.s6_addr;
+#endif
+    for (auto it = addr.begin(); it != addr.end(); ++it)
+    {
+        auto s = *it;
+        auto hi = static_cast<uint8_t>((s >> 8) & 0xFF);
+        auto lo = static_cast<uint8_t>(s & 0xFF);
+        *(b++) = hi;
+        *(b++) = lo;
+    }
+    return *this;
+}
+
 uint16_t EndPoint::GetPort()const noexcept
 {
     if (Storage.ss_family == AF_INET)
     {
-        const ::sockaddr_in* real = reinterpret_cast<const ::sockaddr_in*>(&Storage);
+        auto real = reinterpret_cast<const ::sockaddr_in*>(&Storage);
         return ntohs(real->sin_port);
     }
-    else
+    else if (Storage.ss_family == AF_INET6)
     {
-        const ::sockaddr_in6* real = reinterpret_cast<const ::sockaddr_in6*>(&Storage);
+        auto real = reinterpret_cast<const ::sockaddr_in6*>(&Storage);
         return ntohs(real->sin6_port);
     }
-}
-
-std::string EndPoint::GetAddress()const
-{
-    char address[INET6_ADDRSTRLEN] = { 0 };
-    static_assert(INET6_ADDRSTRLEN >= INET_ADDRSTRLEN, "Bad system api");
-
-    if (Storage.ss_family == AF_INET)
-    {
-        const ::sockaddr_in* real = reinterpret_cast<const ::sockaddr_in*>(&Storage);
-        InetNtop4(&real->sin_addr, address, sizeof(address));
-        return address;
-    }
-    else
-    {
-        const ::sockaddr_in6* real = reinterpret_cast<const ::sockaddr_in6*>(&Storage);
-        InetNtop6(&real->sin6_addr, address, sizeof(address));
-        return address;
-    }
-}
-
-uint32_t EndPoint::GetAddressIpv4()const
-{
-    if (Storage.ss_family != AF_INET)
-        MOE_THROW(InvalidCallException, "Address is not an ipv4 one");
-
-    const ::sockaddr_in* real = reinterpret_cast<const ::sockaddr_in*>(&Storage);
-#ifdef MOE_WINDOWS
-    return real->sin_addr.S_un.S_addr;
-#else
-    return real->sin_addr.s_addr;
-#endif
-}
-
-const uint8_t* EndPoint::GetAddressIpv6()const
-{
-    if (Storage.ss_family != AF_INET6)
-        MOE_THROW(InvalidCallException, "Address is not an ipv6 one");
-
-    const ::sockaddr_in6* real = reinterpret_cast<const ::sockaddr_in6*>(&Storage);
-#ifdef MOE_WINDOWS
-    return real->sin6_addr.u.Byte;
-#else
-    return real->sin6_addr.s6_addr;
-#endif
+    return 0;
 }
 
 EndPoint& EndPoint::SetPort(uint16_t port)noexcept
 {
     if (Storage.ss_family == AF_INET)
     {
-        ::sockaddr_in* real = reinterpret_cast<::sockaddr_in*>(&Storage);
+        auto real = reinterpret_cast<::sockaddr_in*>(&Storage);
         real->sin_port = htons(port);
     }
-    else
+    else if (Storage.ss_family == AF_INET6)
     {
-        ::sockaddr_in6* real = reinterpret_cast<::sockaddr_in6*>(&Storage);
+        auto real = reinterpret_cast<::sockaddr_in6*>(&Storage);
         real->sin6_port = htons(port);
     }
     return *this;
@@ -340,7 +664,5 @@ EndPoint& EndPoint::SetPort(uint16_t port)noexcept
 
 std::string EndPoint::ToString()const
 {
-    if (Storage.ss_family == AF_INET6)
-        return StringUtils::Format("[{0}]:{1}", GetAddress(), GetPort());
     return StringUtils::Format("{0}:{1}", GetAddress(), GetPort());
 }

@@ -1,11 +1,10 @@
 /**
  * @file
  * @author chu
- * @date 2017/12/27
+ * @date 2017/12/10
  */
 #pragma once
-#include "IoHandle.hpp"
-#include "CoEvent.hpp"
+#include "AsyncHandle.hpp"
 
 #include <functional>
 
@@ -14,74 +13,69 @@ namespace moe
 namespace UV
 {
     /**
-     * @brief 信号
+     * @brief 信号（基类）
      */
-    class Signal :
-        public IoHandle
+    class SignalBase :
+        public AsyncHandle
     {
-        friend class ObjectPool;
-
-    public:
-        using CallbackType = std::function<void(int)>;
-
-        /**
-         * @brief 创建一个信号侦听器
-         */
-        static IoHandleHolder<Signal> Create();
-
     private:
-        static void OnUVSignal(uv_signal_t* handle, int signum)noexcept;
+        static void OnUVSignal(::uv_signal_t* handle, int signum)noexcept;
 
     protected:
-        Signal();
+        SignalBase();
 
     public:
         /**
-         * @brief 获取或设置信号触发回调函数
-         */
-        CallbackType GetCallback()const noexcept { return m_stCallback; }
-        void SetCallback(const CallbackType& callback) { m_stCallback = callback; }
-        void SetCallback(CallbackType&& callback)noexcept { m_stCallback = std::move(callback); }
-
-        /**
-         * @brief 启动信号
+         * @brief 激活句柄
+         * @param signum 信号ID
          */
         void Start(int signum);
 
         /**
-         * @brief 终止信号回调
+         * @brief 终止句柄
          */
         bool Stop()noexcept;
 
-        /**
-         * @brief （协程）等待信号触发
-         * @param timeout 超时时间
-         * @return 事件是否触发，若超时或者取消均会返回false
-         *
-         * 该方法只能在协程上执行。
-         * 只允许单个协程进行等待。
-         */
-        bool CoWait(Time::Tick timeout=Coroutine::kInfinityTimeout);
-
-        /**
-         * @brief 取消协程等待
-         */
-        void CancelWait()noexcept;
-
-    protected:
-        void OnClose()noexcept override;
-        void OnSignal(int signum)noexcept;
+    protected:  // 需要实现
+        virtual void OnSignal(int signum) = 0;
 
     private:
         ::uv_signal_t m_stHandle;
+    };
 
-        int m_iWatchedSignum = 0;
+    /**
+     * @brief 信号
+     */
+    class Signal :
+        public SignalBase
+    {
+    public:
+        using OnSignalCallbackType = std::function<void(int)>;
 
-        // 协程
-        CoEvent m_stSignalEvent;  // 信号事件
+        static UniqueAsyncHandlePtr<Signal> Create();
+        static UniqueAsyncHandlePtr<Signal> Create(const OnSignalCallbackType& callback);
+        static UniqueAsyncHandlePtr<Signal> Create(OnSignalCallbackType&& callback);
 
-        // 回调
-        CallbackType m_stCallback;
+    protected:
+        using SignalBase::SignalBase;
+
+    public:
+        /**
+         * @brief 获取事件回调
+         */
+        const OnSignalCallbackType& GetOnSignalCallback()const noexcept { return m_pOnSignal; }
+
+        /**
+         * @brief 设置事件回调
+         * @param type 事件类型
+         */
+        void SetOnSignalCallback(const OnSignalCallbackType& cb) { m_pOnSignal = cb; }
+
+    protected:
+        void OnSignal(int signum)override;
+
+    private:
+        OnSignalCallbackType m_pOnSignal;
     };
 }
 }

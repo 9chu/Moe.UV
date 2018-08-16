@@ -1,260 +1,204 @@
 /**
  * @file
  * @author chu
- * @date 2017/12/2
+ * @date 2018/8/15
  */
 #include <Moe.UV/Dns.hpp>
-#include <Moe.UV/RunLoop.hpp>
 
-#include <Moe.Coroutine/Event.hpp>
-#include <Moe.Coroutine/Coroutine.hpp>
-#include <Moe.Coroutine/Scheduler.hpp>
+#include <Moe.UV/RunLoop.hpp>
+#include <Moe.Core/Logging.hpp>
 
 using namespace std;
 using namespace moe;
 using namespace UV;
-using namespace Coroutine;
 
-namespace
+struct UVGetAddrInfoReq
 {
-    struct UVGetAddrInfoReq :
-        public ObjectPool::RefBase<UVGetAddrInfoReq>
+    ::uv_getaddrinfo_t Request;
+
+    Dns::OnResolveCallbackType OnResolveOne;
+    Dns::OnResolveAllCallbackType OnResolveAll;
+
+    static void Callback(::uv_getaddrinfo_t* req, int status, ::addrinfo* res)
     {
-        ::uv_getaddrinfo_t Request;
+        UniquePooledObject<UVGetAddrInfoReq> self;
+        self.reset(static_cast<UVGetAddrInfoReq*>(req->data));
 
-        RefPtr<Coroutine::Event> Event;
-        exception_ptr Exception;
-
-        vector<EndPoint> Result;
-
-        static void Callback(::uv_getaddrinfo_t* req, int status, ::addrinfo* res)
+        if (status != 0)
         {
-            RefPtr<UVGetAddrInfoReq> self(static_cast<UVGetAddrInfoReq*>(req->data));
-
-            if (status != 0)
-            {
-                try
-                {
-                    MOE_UV_THROW(status);
-                }
-                catch (...)
-                {
-                    if (res)
-                        ::uv_freeaddrinfo(res);
-                    self->Exception = std::current_exception();
-                    self->Event->SetEvent();
-                    return;
-                }
-            }
-
-            try
-            {
-                ::addrinfo* node = res;
-                while (node)
-                {
-                    EndPoint ep;
-                    if (node->ai_family == AF_INET)
-                    {
-                        assert(node->ai_addrlen >= sizeof(::sockaddr_in));
-                        ep = EndPoint(*reinterpret_cast<::sockaddr_in*>(node->ai_addr));
-                    }
-                    else if (node->ai_family == AF_INET6)
-                    {
-                        assert(node->ai_addrlen >= sizeof(::sockaddr_in6));
-                        ep = EndPoint(*reinterpret_cast<::sockaddr_in*>(node->ai_addr));
-                    }
-
-                    bool ignore = false;
-                    for (auto& st : self->Result)
-                    {
-                        if (st == ep)
-                        {
-                            ignore = true;
-                            break;
-                        }
-                    }
-
-                    if (!ignore)
-                        self->Result.push_back(ep);
-
-                    node = node->ai_next;
-                }
-
-                // 恢复协程
-                self->Event->SetEvent();
-            }
-            catch (...)
-            {
-                self->Result.clear();
-
-                // bad_alloc
-                self->Exception = std::current_exception();
-                self->Event->SetEvent();
-            }
-
-            if (res)
-                ::uv_freeaddrinfo(res);
+            MOE_UV_CATCH_ALL_BEGIN
+                if (self->OnResolveOne)
+                    self->OnResolveOne(static_cast<uv_errno_t>(status), EmptyRefOf<EndPoint>());
+                else
+                    self->OnResolveAll(static_cast<uv_errno_t>(status), EmptyRefOf<vector<EndPoint>>());
+            MOE_UV_CATCH_ALL_END
         }
-    };
-
-    struct UVGetNameInfoReq :
-        public ObjectPool::RefBase<UVGetNameInfoReq>
-    {
-        ::uv_getnameinfo_t Request;
-
-        RefPtr<Coroutine::Event> Event;
-        exception_ptr Exception;
-
-        string Hostname;
-        string Service;
-
-        static void Callback(::uv_getnameinfo_t* req, int status, const char* hostname, const char* service)
+        else
         {
-            RefPtr<UVGetNameInfoReq> self(static_cast<UVGetNameInfoReq*>(req->data));
+            ::addrinfo* node = res;
 
-            if (status != 0)
+            EndPoint ep;
+            vector<EndPoint> result;
+            while (node)
             {
-                try
+                if (node->ai_family == AF_INET)
                 {
-                    MOE_UV_THROW(status);
+                    assert(node->ai_addrlen >= sizeof(::sockaddr_in));
+                    ep = EndPoint(*reinterpret_cast<::sockaddr_in*>(node->ai_addr));
                 }
-                catch (...)
+                else if (node->ai_family == AF_INET6)
                 {
-                    self->Exception = std::current_exception();
-                    self->Event->SetEvent();
-                    return;
+                    assert(node->ai_addrlen >= sizeof(::sockaddr_in6));
+                    ep = EndPoint(*reinterpret_cast<::sockaddr_in*>(node->ai_addr));
                 }
+
+                if (self->OnResolveOne)
+                    break;
+
+                bool ignore = false;
+                for (auto& st : result)
+                {
+                    if (st == ep)
+                    {
+                        ignore = true;
+                        break;
+                    }
+                }
+
+                if (!ignore)
+                {
+                    try
+                    {
+                        result.push_back(ep);
+                    }
+                    catch (const bad_alloc&)
+                    {
+                        MOE_UV_CATCH_ALL_BEGIN
+                            self->OnResolveAll(UV_ENOMEM, EmptyRefOf<vector<EndPoint>>());
+                        MOE_UV_CATCH_ALL_END
+
+                        if (res)
+                            ::uv_freeaddrinfo(res);
+                        return;
+                    }
+                }
+
+                node = node->ai_next;
             }
 
-            try
+            if (self->OnResolveOne)
             {
-                self->Hostname = hostname;
-                self->Service = service;
-
-                // 恢复协程
-                self->Event->SetEvent();
+                MOE_UV_CATCH_ALL_BEGIN
+                    self->OnResolveOne(static_cast<uv_errno_t>(0), ep);
+                MOE_UV_CATCH_ALL_END
             }
-            catch (...)
+            else
             {
-                // bad_alloc
-                self->Exception = std::current_exception();
-                self->Event->SetEvent();
+                MOE_UV_CATCH_ALL_BEGIN
+                    self->OnResolveAll(static_cast<uv_errno_t>(0), result);
+                MOE_UV_CATCH_ALL_END
             }
         }
-    };
-}
 
-EndPoint Dns::CoResolve(const char* hostname)
+        if (res)
+            ::uv_freeaddrinfo(res);
+    }
+};
+
+struct UVGetNameInfoReq
 {
-    auto thread = Coroutine::GetCurrentThread();
-    if (!thread)
-        MOE_THROW(InvalidCallException, "Bad execution context");
+    ::uv_getnameinfo_t Request;
 
-    auto req = ObjectPool::Create<UVGetAddrInfoReq>();
-    req->Event = thread->GetScheduler().CreateEvent(true);
-    assert(req->Event);
+    Dns::OnReverseResolveCallbackType OnReverseResolve;
 
-    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &req->Request, UVGetAddrInfoReq::Callback, hostname,
+    static void Callback(::uv_getnameinfo_t* req, int status, const char* hostname, const char* service)
+    {
+        UniquePooledObject<UVGetNameInfoReq> self;
+        self.reset(static_cast<UVGetNameInfoReq*>(req->data));
+
+        if (status != 0)
+        {
+            if (self->OnReverseResolve)
+            {
+                MOE_UV_CATCH_ALL_BEGIN
+                    self->OnReverseResolve(static_cast<uv_errno_t>(status), EmptyRefOf<string>(), EmptyRefOf<string>());
+                MOE_UV_CATCH_ALL_END
+            }
+        }
+        else
+        {
+            if (self->OnReverseResolve)
+            {
+                MOE_UV_CATCH_ALL_BEGIN
+                    self->OnReverseResolve(static_cast<uv_errno_t>(0), hostname, service);
+                MOE_UV_CATCH_ALL_END
+            }
+        }
+    }
+};
+
+#define MOVE_OWNER_SELF \
+    do { \
+        auto raw = object.release(); \
+        raw->Request.data = raw; \
+    } while (false)
+
+void Dns::Resolve(const char* hostname, const OnResolveCallbackType& cb)
+{
+    MOE_UV_NEW_UNIQUE(UVGetAddrInfoReq);
+    object->OnResolveOne = cb;
+
+    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname,
         nullptr, nullptr));
-
-    // 手动增加一个引用计数
-    req->Request.data = RefPtr<UVGetAddrInfoReq>(req).Release();
-
-    // 发起协程等待
-    // 此时协程栈和Request上各自持有一个引用计数
-    auto ret = Coroutine::Wait(req->Event);
-    MOE_UNUSED(ret);
-    assert(ret == ThreadWaitResult::Succeed);
-    if (req->Exception)
-        rethrow_exception(req->Exception);
-
-    if (req->Result.size() > 0)
-        return req->Result[0];
-
-    MOE_THROW(ObjectNotFoundException, "Can't resolve domain \"{0}\"", hostname);
+    MOVE_OWNER_SELF;
 }
 
-void Dns::CoResolve(std::vector<EndPoint>& out, const char* hostname)
+void Dns::Resolve(const char* hostname, OnResolveCallbackType&& cb)
 {
-    auto thread = Coroutine::GetCurrentThread();
-    if (!thread)
-        MOE_THROW(InvalidCallException, "Bad execution context");
+    MOE_UV_NEW_UNIQUE(UVGetAddrInfoReq);
+    object->OnResolveOne = std::move(cb);
 
-    auto req = ObjectPool::Create<UVGetAddrInfoReq>();
-    req->Event = thread->GetScheduler().CreateEvent(true);
-    assert(req->Event);
-
-    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &req->Request, UVGetAddrInfoReq::Callback, hostname,
+    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname,
         nullptr, nullptr));
-
-    // 手动增加一个引用计数
-    req->Request.data = RefPtr<UVGetAddrInfoReq>(req).Release();
-
-    // 发起协程等待
-    // 此时协程栈和Request上各自持有一个引用计数
-    auto ret = Coroutine::Wait(req->Event);
-    MOE_UNUSED(ret);
-    assert(ret == ThreadWaitResult::Succeed);
-    if (req->Exception)
-        rethrow_exception(req->Exception);
-
-    // 如果没有错误就移动结果
-    out = std::move(req->Result);
+    MOVE_OWNER_SELF;
 }
 
-void Dns::CoReverse(const EndPoint& address, std::string& hostname)
+void Dns::ResolveAll(const char* hostname, const OnResolveAllCallbackType& cb)
 {
-    auto thread = Coroutine::GetCurrentThread();
-    if (!thread)
-        MOE_THROW(InvalidCallException, "Bad execution context");
+    MOE_UV_NEW_UNIQUE(UVGetAddrInfoReq);
+    object->OnResolveAll = cb;
 
-    auto req = ObjectPool::Create<UVGetNameInfoReq>();
-    req->Event = thread->GetScheduler().CreateEvent(true);
-    assert(req->Event);
-
-    MOE_UV_CHECK(::uv_getnameinfo(RunLoop::GetCurrentUVLoop(), &req->Request, UVGetNameInfoReq::Callback,
-        reinterpret_cast<const ::sockaddr*>(&address.Storage), 0));
-
-    // 手动增加一个引用计数
-    req->Request.data = RefPtr<UVGetNameInfoReq>(req).Release();
-
-    // 发起协程等待
-    // 此时协程栈和Request上各自持有一个引用计数
-    auto ret = Coroutine::Wait(req->Event);
-    MOE_UNUSED(ret);
-    assert(ret == ThreadWaitResult::Succeed);
-    if (req->Exception)
-        rethrow_exception(req->Exception);
-
-    // 如果没有错误就移动结果
-    hostname = std::move(req->Hostname);
+    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname,
+        nullptr, nullptr));
+    MOVE_OWNER_SELF;
 }
 
-void Dns::CoReverse(const EndPoint& address, std::string& hostname, std::string& service)
+void Dns::ResolveAll(const char* hostname, OnResolveAllCallbackType&& cb)
 {
-    auto thread = Coroutine::GetCurrentThread();
-    if (!thread)
-        MOE_THROW(InvalidCallException, "Bad execution context");
+    MOE_UV_NEW_UNIQUE(UVGetAddrInfoReq);
+    object->OnResolveAll = std::move(cb);
 
-    auto req = ObjectPool::Create<UVGetNameInfoReq>();
-    req->Event = thread->GetScheduler().CreateEvent(true);
-    assert(req->Event);
+    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname,
+        nullptr, nullptr));
+    MOVE_OWNER_SELF;
+}
 
-    MOE_UV_CHECK(::uv_getnameinfo(RunLoop::GetCurrentUVLoop(), &req->Request, UVGetNameInfoReq::Callback,
+void Dns::ReverseResolve(const EndPoint& address, const OnReverseResolveCallbackType& cb)
+{
+    MOE_UV_NEW_UNIQUE(UVGetNameInfoReq);
+    object->OnReverseResolve = cb;
+
+    MOE_UV_CHECK(::uv_getnameinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetNameInfoReq::Callback,
         reinterpret_cast<const ::sockaddr*>(&address.Storage), 0));
+    MOVE_OWNER_SELF;
+}
 
-    // 手动增加一个引用计数
-    req->Request.data = RefPtr<UVGetNameInfoReq>(req).Release();
+void Dns::ReverseResolve(const EndPoint& address, OnReverseResolveCallbackType&& cb)
+{
+    MOE_UV_NEW_UNIQUE(UVGetNameInfoReq);
+    object->OnReverseResolve = std::move(cb);
 
-    // 发起协程等待
-    // 此时协程栈和Request上各自持有一个引用计数
-    auto ret = Coroutine::Wait(req->Event);
-    MOE_UNUSED(ret);
-    assert(ret == ThreadWaitResult::Succeed);
-    if (req->Exception)
-        rethrow_exception(req->Exception);
-
-    // 如果没有错误就移动结果
-    hostname = std::move(req->Hostname);
-    service = std::move(req->Service);
+    MOE_UV_CHECK(::uv_getnameinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetNameInfoReq::Callback,
+        reinterpret_cast<const ::sockaddr*>(&address.Storage), 0));
+    MOVE_OWNER_SELF;
 }
