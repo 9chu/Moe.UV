@@ -140,12 +140,13 @@ namespace UV
         pointer allocate(size_type num, const void* hint=nullptr)
         {
             MOE_UNUSED(hint);
-            MOE_UV_ALLOC(n * sizeof(T));
+            MOE_UV_ALLOC(num * sizeof(T));
             return static_cast<T*>(buffer.release());
         }
 
         void deallocate(pointer p, size_type num)
         {
+            MOE_UNUSED(num);
             UniquePooledObject<void> object;
             object.reset(p);
         }

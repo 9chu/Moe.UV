@@ -104,7 +104,7 @@ void UdpSocketBase::OnUVRecv(::uv_udp_t* udp, ssize_t nread, const ::uv_buf_t* b
 
         MOE_UV_CATCH_ALL_BEGIN
             // 通知数据读取
-            self->OnData(remote, BytesView(static_cast<const uint8_t*>(buffer.get()), nread));
+            self->OnRead(remote, BytesView(static_cast<const uint8_t*>(buffer.get()), nread));
         MOE_UV_CATCH_ALL_END
     }
 }
@@ -286,8 +286,8 @@ void UdpSocket::OnError(::uv_errno_t error)
         m_pOnError(error);
 }
 
-void UdpSocket::OnData(const EndPoint& remote, BytesView data)
+void UdpSocket::OnRead(const EndPoint& remote, BytesView data)
 {
-    if (m_pOnData)
-        m_pOnData(remote, data);
+    if (m_pOnRead)
+        m_pOnRead(remote, data);
 }
