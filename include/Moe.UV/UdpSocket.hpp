@@ -111,7 +111,7 @@ namespace UV
 
     protected:  // 需要实现
         virtual void OnError(::uv_errno_t error) = 0;
-        virtual void OnRead(const EndPoint& remote, BytesView data) = 0;
+        virtual void OnData(const EndPoint& remote, BytesView data) = 0;
 
     private:
         ::uv_udp_t m_stHandle;
@@ -126,7 +126,7 @@ namespace UV
     public:
         using OnSendCallbackType = UdpSocketBase::OnSendCallbackType;
         using OnErrorCallbackType = std::function<void(::uv_errno_t)>;
-        using OnReadCallbackType = std::function<void(const EndPoint&, BytesView)>;
+        using OnDataCallbackType = std::function<void(const EndPoint&, BytesView)>;
 
     public:
         static UniqueAsyncHandlePtr<UdpSocket> Create();
@@ -147,17 +147,17 @@ namespace UV
         void SetOnErrorCallback(const OnErrorCallbackType& cb) { m_pOnError = cb; }
         void SetOnErrorCallback(OnErrorCallbackType&& cb) { m_pOnError = std::move(cb); }
 
-        const OnReadCallbackType& GetOnReadCallback()const noexcept { return m_pOnRead; }
-        void SetOnReadCallback(const OnReadCallbackType& cb) { m_pOnRead = cb; }
-        void SetOnReadCallback(OnReadCallbackType&& cb) { m_pOnRead = std::move(cb); }
+        const OnDataCallbackType& GetOnDataCallback()const noexcept { return m_pOnData; }
+        void SetOnDataCallback(const OnDataCallbackType& cb) { m_pOnData = cb; }
+        void SetOnDataCallback(OnDataCallbackType&& cb) { m_pOnData = std::move(cb); }
 
     protected:
         void OnError(::uv_errno_t error)override;
-        void OnRead(const EndPoint& remote, BytesView data)override;
+        void OnData(const EndPoint& remote, BytesView data)override;
 
     private:
         OnErrorCallbackType m_pOnError;
-        OnReadCallbackType m_pOnRead;
+        OnDataCallbackType m_pOnData;
     };
 }
 }
