@@ -139,6 +139,9 @@ namespace UV
          */
         static UniqueAsyncHandlePtr<UdpSocket> Create(const EndPoint& bind, bool reuse=true, bool ipv6Only=false);
 
+    protected:
+        UdpSocket() = default;
+
     public:
         const OnErrorCallbackType& GetOnErrorCallback()const noexcept { return m_pOnError; }
         void SetOnErrorCallback(const OnErrorCallbackType& cb) { m_pOnError = cb; }

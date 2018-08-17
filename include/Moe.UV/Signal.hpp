@@ -57,7 +57,7 @@ namespace UV
         static UniqueAsyncHandlePtr<Signal> Create(OnSignalCallbackType&& callback);
 
     protected:
-        using SignalBase::SignalBase;
+        Signal() = default;
 
     public:
         /**

@@ -8,6 +8,7 @@
 #include <Moe.Core/Utils.hpp>
 
 #include "AsyncHandle.hpp"
+#include <functional>
 
 namespace moe
 {
@@ -98,6 +99,59 @@ namespace UV
 
         bool m_bClosing = false;
         ::uv_loop_t m_stLoop;
+    };
+
+    /**
+     * @brief
+     * @tparam T
+     */
+    template <typename T>
+    class RunLoopAllocator
+    {
+    public:
+        typedef T value_type;
+        typedef T* pointer;
+        typedef const T* const_pointer;
+        typedef T& reference;
+        typedef const T& const_reference;
+        typedef std::size_t size_type;
+        typedef std::ptrdiff_t difference_type;
+
+        template <typename U>
+        struct rebind
+        {
+            typedef RunLoopAllocator<U> other;
+        };
+
+    public:
+        RunLoopAllocator()noexcept {}
+        ~RunLoopAllocator()noexcept {}
+
+        RunLoopAllocator(const RunLoopAllocator&)noexcept {}
+
+        template <class U>
+        RunLoopAllocator(const RunLoopAllocator<U>&)noexcept {}
+
+        pointer address(reference value)const { return &value; }
+        const_pointer address(const_reference value)const { return &value; }
+
+        size_type max_size()const noexcept { return std::numeric_limits<std::size_t>::max() / sizeof(T); }
+
+        pointer allocate(size_type num, const void* hint=nullptr)
+        {
+            MOE_UNUSED(hint);
+            MOE_UV_ALLOC(n * sizeof(T));
+            return static_cast<T*>(buffer.release());
+        }
+
+        void deallocate(pointer p, size_type num)
+        {
+            UniquePooledObject<void> object;
+            object.reset(p);
+        }
+
+        void construct(pointer p, const T& value) { new((void*)p) T(value); }
+        void destroy(pointer p) { p->~T(); }
     };
 }
 }
