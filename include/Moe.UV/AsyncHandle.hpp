@@ -26,6 +26,12 @@
 #ifdef CreateSemaphore
 #undef CreateSemaphore
 #endif
+#ifdef SendMessage
+#undef SendMessage
+#endif
+#ifdef DispatchMessage
+#undef DispatchMessage
+#endif
 
 namespace moe
 {
@@ -264,7 +270,7 @@ namespace UV
         auto loop = UV::RunLoop::GetCurrent(); \
         if (!loop) \
             MOE_THROW(InvalidCallException, "RunLoop is not created"); \
-        auto p = Alloc(sizeof(T)); \
+        auto p = loop->GetObjectPool().Alloc(sizeof(T)); \
         object.Reset(new(p.get()) T(__VA_ARGS__)); \
         p.release(); \
     } while (false)
@@ -288,7 +294,7 @@ namespace UV
         auto loop = UV::RunLoop::GetCurrent(); \
         if (!loop) \
             MOE_THROW(InvalidCallException, "RunLoop is not created"); \
-        auto p = Alloc(sizeof(T)); \
+        auto p = loop->GetObjectPool().Alloc(sizeof(T)); \
         object.reset(new(p.get()) T(__VA_ARGS__)); \
         p.release(); \
     } while (false)
@@ -310,6 +316,6 @@ namespace UV
         auto loop = UV::RunLoop::GetCurrent(); \
         if (!loop) \
             MOE_THROW(InvalidCallException, "RunLoop is not created"); \
-        buffer = Alloc(sz); \
+        buffer = loop->GetObjectPool().Alloc(sz); \
     } while (false)
 #endif

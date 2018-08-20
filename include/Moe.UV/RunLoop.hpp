@@ -85,6 +85,12 @@ namespace UV
         void Stop()noexcept;
 
         /**
+         * @brief 执行一次
+         * @param wait 若设置为true，则等待直到一次事件发生
+         */
+        void RunOnce(bool wait);
+
+        /**
          * @brief 强制关闭所有句柄
          */
         void ForceCloseAllHandle()noexcept;

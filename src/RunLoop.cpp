@@ -110,6 +110,11 @@ void RunLoop::Stop()noexcept
     ::uv_stop(&m_stLoop);
 }
 
+void RunLoop::RunOnce(bool wait)
+{
+    ::uv_run(&m_stLoop, wait ? UV_RUN_ONCE : UV_RUN_NOWAIT);
+}
+
 void RunLoop::ForceCloseAllHandle()noexcept
 {
     ::uv_walk(&m_stLoop, UVClosingHandleWalker, this);
