@@ -15,7 +15,7 @@ using namespace std;
 using namespace moe;
 using namespace UV;
 
-thread_local static RunLoop* t_pRunLoop = nullptr;
+static thread_local RunLoop* t_pRunLoop = nullptr;
 
 RunLoop* RunLoop::GetCurrent()noexcept
 {
