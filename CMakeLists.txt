@@ -6,10 +6,6 @@ if(NOT TARGET MoeCore)
     add_subdirectory(3rd/Moe.Core)
 endif()
 
-if(NOT TARGET MoeCoroutine)
-    add_subdirectory(3rd/Moe.Coroutine)
-endif()
-
 if(NOT TARGET uv_a)
     add_subdirectory(3rd/libuv)
 endif()
