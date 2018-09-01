@@ -25,5 +25,5 @@ endif()
 file(GLOB_RECURSE MOE_UV_SRC src/*.cpp include/*.hpp)
 
 add_library(MoeUV STATIC ${MOE_UV_SRC})
-target_link_libraries(MoeUV MoeCore MoeCoroutine uv_a)
+target_link_libraries(MoeUV MoeCore uv_a)
 target_include_directories(MoeUV PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
