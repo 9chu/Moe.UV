@@ -4,26 +4,38 @@
  * @date 2018/8/17
  */
 #pragma once
+#include <Moe.Core/Time.hpp>
 #include "AsyncHandle.hpp"
 
-#include <Moe.Core/Time.hpp>
 #include <functional>
+
+struct uv_timer_s;
 
 namespace moe
 {
 namespace UV
 {
     /**
-     * @brief 计时器（基类）
+     * @brief 计时器
      */
-    class TimerBase :
+    class Timer :
         public AsyncHandle
     {
+    public:
+        using OnTimeCallbackType = std::function<void()>;
+
+        static Timer Create();
+        static Timer CreateTickTimer(Time::Tick interval);
+
     private:
-        static void OnUVTimer(::uv_timer_t* handle)noexcept;
+        static void OnUVTimer(::uv_timer_s* handle)noexcept;
 
     protected:
-        TimerBase();
+        using AsyncHandle::AsyncHandle;
+
+    public:
+        Timer(Timer&& org)noexcept;
+        Timer& operator=(Timer&& rhs)noexcept;
 
     public:
         /**
@@ -60,41 +72,18 @@ namespace UV
          */
         void Stop()noexcept;
 
-    protected:  // 需要实现
-        virtual void OnTime() = 0;
-
-    private:
-        ::uv_timer_t m_stHandle;
-
-        // 属性
-        Time::Tick m_ullFirstTime = 0;
-        Time::Tick m_ullInterval = 0;
-    };
-
-    /**
-     * @brief 计时器
-     */
-    class Timer :
-        public TimerBase
-    {
-    public:
-        using OnTimeCallbackType = std::function<void()>;
-
-        static UniqueAsyncHandlePtr<Timer> Create();
-        static UniqueAsyncHandlePtr<Timer> CreateTickTimer(Time::Tick interval);
-
-    protected:
-        Timer() = default;
-
     public:
         OnTimeCallbackType GetOnTimeCallback()const noexcept { return m_stOnTime; }
         void SetOnTimeCallback(const OnTimeCallbackType& cb) { m_stOnTime = cb; }
         void SetOnTimeCallback(OnTimeCallbackType&& cb) { m_stOnTime = std::move(cb); }
 
-    protected:
-        void OnTime()override;
+    protected:  // 事件
+        void OnTime();
 
     private:
+        Time::Tick m_ullFirstTime = 0;
+        Time::Tick m_ullInterval = 0;
+
         OnTimeCallbackType m_stOnTime;
     };
 }

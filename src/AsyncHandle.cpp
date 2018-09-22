@@ -5,22 +5,22 @@
  */
 #include <Moe.UV/AsyncHandle.hpp>
 
-#include <Moe.UV/RunLoop.hpp>
-#include <Moe.Core/Logging.hpp>
+#include "UV.inl"
 
 using namespace std;
 using namespace moe;
 using namespace UV;
 
-::uv_loop_t* AsyncHandle::GetCurrentUVLoop()
+void AsyncHandle::OnUVClose(::uv_handle_s* handle)noexcept
 {
-    return RunLoop::GetCurrentUVLoop();
-}
+    if (!handle->data)
+    {
+        // 所有权已经提前释放
+        UniquePooledObject<::uv_handle_s> p(handle);
+        return;
+    }
 
-void AsyncHandle::OnUVClose(::uv_handle_t* handle)noexcept
-{
-    RefPtr<AsyncHandle> self(static_cast<AsyncHandle*>(handle->data));  // 获取所有权
-
+    auto self = static_cast<AsyncHandle*>(handle->data);
     self->m_bHandleClosed = true;
 
     MOE_UV_CATCH_ALL_BEGIN
@@ -28,16 +28,64 @@ void AsyncHandle::OnUVClose(::uv_handle_t* handle)noexcept
     MOE_UV_CATCH_ALL_END
 }
 
-AsyncHandle::AsyncHandle()
+AsyncHandle::AsyncHandle(UniquePooledObject<::uv_handle_s>&& handle)
+    : m_pHandle(std::move(handle))
 {
-    auto runloop = RunLoop::GetCurrent();
-    if (!runloop || runloop->IsClosing())
-        MOE_THROW(InvalidCallException, "RunLoop is closing");
+    assert(m_pHandle);
+    m_pHandle->data = this;
+    m_bHandleClosed = false;
+}
+
+AsyncHandle::AsyncHandle(AsyncHandle&& org)noexcept
+    : m_pHandle(std::move(org.m_pHandle)), m_bHandleClosed(org.m_bHandleClosed)
+{
+    org.m_bHandleClosed = true;
+
+    if (m_pHandle)
+        m_pHandle->data = this;
 }
 
 AsyncHandle::~AsyncHandle()
 {
-    assert(m_bHandleClosed);
+    if (!m_bHandleClosed)  // 此时需要强行释放句柄
+    {
+        auto ret = Close();
+        MOE_UNUSED(ret);
+        assert(ret);
+
+        // 由于libuv依旧具有所有权，此时需要延后释放内存
+        auto p = m_pHandle.release();
+        p->data = nullptr;
+    }
+}
+
+AsyncHandle& AsyncHandle::operator=(AsyncHandle&& org)noexcept
+{
+    if (m_pHandle)
+    {
+        Close();
+        m_pHandle->data = nullptr;
+    }
+
+    m_pHandle = std::move(org.m_pHandle);
+    m_bHandleClosed = org.m_bHandleClosed;
+
+    org.m_bHandleClosed = true;
+
+    if (m_pHandle)
+        m_pHandle->data = this;
+    return *this;
+}
+
+::uv_handle_s* AsyncHandle::GetHandle()const noexcept
+{
+    return m_pHandle.get();
+}
+
+bool AsyncHandle::IsClosing()const noexcept
+{
+    auto ret = !m_pHandle || m_bHandleClosed || ::uv_is_closing(GetHandle());
+    return ret;
 }
 
 bool AsyncHandle::Close()noexcept
@@ -46,23 +94,22 @@ bool AsyncHandle::Close()noexcept
         return false;
 
     // 发起Close操作
-    ::uv_close(m_pHandle, OnUVClose);
+    ::uv_close(m_pHandle.get(), OnUVClose);
     return true;
 }
 
-void AsyncHandle::BindHandle(::uv_handle_t* handle)noexcept
+void AsyncHandle::Ref()noexcept
 {
-    assert(!m_pHandle && m_bHandleClosed);
-    assert(handle);
+    if (IsClosed())
+        return;
+    ::uv_ref(GetHandle());
+}
 
-    m_pHandle = handle;
-    m_bHandleClosed = false;
-
-    // 在句柄上持有所有权
-    // 这意味着只有正确调用Close方法后才能销毁对象
-    // 否则引用计数将无法得到释放
-    RefPtr<AsyncHandle> self = RefFromThis();
-    m_pHandle->data = self.Release();
+void AsyncHandle::Unref()noexcept
+{
+    if (IsClosed())
+        return;
+    ::uv_unref(GetHandle());
 }
 
 void AsyncHandle::OnClose()

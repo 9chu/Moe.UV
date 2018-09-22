@@ -8,7 +8,8 @@
 #include <Moe.Core/Utils.hpp>
 
 #include "AsyncHandle.hpp"
-#include <functional>
+
+struct uv_loop_s;
 
 namespace moe
 {
@@ -41,11 +42,8 @@ namespace UV
          */
         static Time::Tick Now()noexcept;
 
-    protected:
-        static ::uv_loop_t* GetCurrentUVLoop();
-
     private:
-        static void UVClosingHandleWalker(::uv_handle_t* handle, void* arg)noexcept;
+        static void UVClosingHandleWalker(::uv_handle_s* handle, void* arg)noexcept;
 
     public:
         /**
@@ -64,6 +62,11 @@ namespace UV
          */
         const ObjectPool& GetObjectPool()const noexcept { return m_stObjectPool; }
         ObjectPool& GetObjectPool()noexcept { return m_stObjectPool; }
+
+        /**
+         * @brief 获取内部句柄
+         */
+        ::uv_loop_s* GetHandle()const noexcept;
 
         /**
          * @brief 是否处于关闭状态
@@ -103,62 +106,8 @@ namespace UV
     private:
         ObjectPool& m_stObjectPool;
 
+        UniquePooledObject<::uv_loop_s> m_pHandle;
         bool m_bClosing = false;
-        ::uv_loop_t m_stLoop;
-    };
-
-    /**
-     * @brief
-     * @tparam T
-     */
-    template <typename T>
-    class RunLoopAllocator
-    {
-    public:
-        typedef T value_type;
-        typedef T* pointer;
-        typedef const T* const_pointer;
-        typedef T& reference;
-        typedef const T& const_reference;
-        typedef std::size_t size_type;
-        typedef std::ptrdiff_t difference_type;
-
-        template <typename U>
-        struct rebind
-        {
-            typedef RunLoopAllocator<U> other;
-        };
-
-    public:
-        RunLoopAllocator()noexcept {}
-        ~RunLoopAllocator()noexcept {}
-
-        RunLoopAllocator(const RunLoopAllocator&)noexcept {}
-
-        template <class U>
-        RunLoopAllocator(const RunLoopAllocator<U>&)noexcept {}
-
-        pointer address(reference value)const { return &value; }
-        const_pointer address(const_reference value)const { return &value; }
-
-        size_type max_size()const noexcept { return std::numeric_limits<std::size_t>::max() / sizeof(T); }
-
-        pointer allocate(size_type num, const void* hint=nullptr)
-        {
-            MOE_UNUSED(hint);
-            MOE_UV_ALLOC(num * sizeof(T));
-            return static_cast<T*>(buffer.release());
-        }
-
-        void deallocate(pointer p, size_type num)
-        {
-            MOE_UNUSED(num);
-            UniquePooledObject<void> object;
-            object.reset(p);
-        }
-
-        void construct(pointer p, const T& value) { new((void*)p) T(value); }
-        void destroy(pointer p) { p->~T(); }
     };
 }
 }

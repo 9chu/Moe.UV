@@ -9,29 +9,50 @@
 
 #include <functional>
 
+struct uv_udp_send_s;
+struct uv_udp_s;
+struct uv_buf_t;
+
 namespace moe
 {
 namespace UV
 {
     /**
-     * @brief UDP套接字（基类）
+     * @brief UDP套接字
      */
-    class UdpSocketBase :
+    class UdpSocket :
         public AsyncHandle
     {
         friend class ObjectPool;
 
     public:
-        using OnSendCallbackType = std::function<void(uv_errno_t)>;
+        using OnSendCallbackType = std::function<void(int)>;
+        using OnErrorCallbackType = std::function<void(int)>;
+        using OnDataCallbackType = std::function<void(const EndPoint&, BytesView)>;
+
+    public:
+        static UdpSocket Create();
+
+        /**
+         * @brief 构造UDP套接字
+         * @param bind 绑定端口
+         * @param reuse 是否复用
+         * @param ipv6Only 是否仅绑定IPV6地址
+         */
+        static UdpSocket Create(const EndPoint& bind, bool reuse=true, bool ipv6Only=false);
 
     private:
-        static void OnUVSend(::uv_udp_send_t* request, int status)noexcept;
-        static void OnUVAllocBuffer(::uv_handle_t* handle, size_t suggestedSize, ::uv_buf_t* buf)noexcept;
-        static void OnUVRecv(::uv_udp_t* udp, ssize_t nread, const ::uv_buf_t* buf, const ::sockaddr* addr,
+        static void OnUVSend(::uv_udp_send_s* request, int status)noexcept;
+        static void OnUVAllocBuffer(::uv_handle_s* handle, size_t suggestedSize, ::uv_buf_t* buf)noexcept;
+        static void OnUVRecv(::uv_udp_s* handle, ssize_t nread, const ::uv_buf_t* buf, const ::sockaddr* addr,
             unsigned flags)noexcept;
 
     protected:
-        UdpSocketBase();
+        using AsyncHandle::AsyncHandle;
+
+    public:
+        UdpSocket(UdpSocket&& org)noexcept;
+        UdpSocket& operator=(UdpSocket&& rhs)noexcept;
 
     public:
         /**
@@ -109,36 +130,6 @@ namespace UV
          */
         bool TrySend(const EndPoint& address, BytesView buffer);
 
-    protected:  // 需要实现
-        virtual void OnError(::uv_errno_t error) = 0;
-        virtual void OnData(const EndPoint& remote, BytesView data) = 0;
-
-    private:
-        ::uv_udp_t m_stHandle;
-    };
-
-    /**
-     * @brief UDP套接字
-     */
-    class UdpSocket :
-        public UdpSocketBase
-    {
-    public:
-        using OnSendCallbackType = UdpSocketBase::OnSendCallbackType;
-        using OnErrorCallbackType = std::function<void(::uv_errno_t)>;
-        using OnDataCallbackType = std::function<void(const EndPoint&, BytesView)>;
-
-    public:
-        static UniqueAsyncHandlePtr<UdpSocket> Create();
-
-        /**
-         * @brief 构造UDP套接字
-         * @param bind 绑定端口
-         * @param reuse 是否复用
-         * @param ipv6Only 是否仅绑定IPV6地址
-         */
-        static UniqueAsyncHandlePtr<UdpSocket> Create(const EndPoint& bind, bool reuse=true, bool ipv6Only=false);
-
     public:
         const OnErrorCallbackType& GetOnErrorCallback()const noexcept { return m_pOnError; }
         void SetOnErrorCallback(const OnErrorCallbackType& cb) { m_pOnError = cb; }
@@ -148,9 +139,9 @@ namespace UV
         void SetOnDataCallback(const OnDataCallbackType& cb) { m_pOnData = cb; }
         void SetOnDataCallback(OnDataCallbackType&& cb) { m_pOnData = std::move(cb); }
 
-    protected:
-        void OnError(::uv_errno_t error)override;
-        void OnData(const EndPoint& remote, BytesView data)override;
+    protected:  // 事件
+        void OnError(int error);
+        void OnData(const EndPoint& remote, BytesView data);
 
     private:
         OnErrorCallbackType m_pOnError;

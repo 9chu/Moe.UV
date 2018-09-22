@@ -5,55 +5,58 @@
  */
 #include <Moe.UV/AsyncNotifier.hpp>
 
-#include <Moe.Core/Logging.hpp>
-#include <Moe.UV/RunLoop.hpp>
+#include "UV.inl"
 
 using namespace std;
 using namespace moe;
 using namespace UV;
 
-//////////////////////////////////////////////////////////////////////////////// AsyncNotifierBase
-
-void AsyncNotifierBase::OnUVAsync(::uv_async_t* handle)noexcept
+void AsyncNotifier::OnUVAsync(::uv_async_s* handle)noexcept
 {
-    auto* self = GetSelf<AsyncNotifierBase>(handle);
+    MOE_UV_GET_SELF(AsyncNotifier);
 
     MOE_UV_CATCH_ALL_BEGIN
         self->OnAsync();
     MOE_UV_CATCH_ALL_END
 }
 
-AsyncNotifierBase::AsyncNotifierBase()
+AsyncNotifier AsyncNotifier::Create()
 {
-    MOE_UV_CHECK(::uv_async_init(GetCurrentUVLoop(), &m_stHandle, OnUVAsync));
-    BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
+    MOE_UV_NEW(::uv_async_t);
+    MOE_UV_CHECK(::uv_async_init(GetCurrentUVLoop(), object.get(), OnUVAsync));
+    return AsyncNotifier(CastHandle(std::move(object)));
 }
 
-void AsyncNotifierBase::Notify()
+AsyncNotifier AsyncNotifier::Create(const OnAsyncCallbackType& callback)
 {
-    MOE_UV_CHECK(::uv_async_send(&m_stHandle));
+    auto ret = Create();
+    ret.SetOnAsyncCallback(callback);
+    return ret;
 }
 
-//////////////////////////////////////////////////////////////////////////////// AsyncNotifier
-
-UniqueAsyncHandlePtr<AsyncNotifier> AsyncNotifier::Create()
+AsyncNotifier AsyncNotifier::Create(OnAsyncCallbackType&& callback)
 {
-    MOE_UV_NEW(AsyncNotifier);
-    return object;
+    auto ret = Create();
+    ret.SetOnAsyncCallback(std::move(callback));
+    return ret;
 }
 
-UniqueAsyncHandlePtr<AsyncNotifier> AsyncNotifier::Create(const OnAsyncCallbackType& callback)
+AsyncNotifier::AsyncNotifier(AsyncNotifier&& org)noexcept
+    : AsyncHandle(std::move(org)), m_pOnAsync(std::move(org.m_pOnAsync))
 {
-    MOE_UV_NEW(AsyncNotifier);
-    object->SetOnAsyncCallback(callback);
-    return object;
 }
 
-UniqueAsyncHandlePtr<AsyncNotifier> AsyncNotifier::Create(OnAsyncCallbackType&& callback)
+AsyncNotifier& AsyncNotifier::operator=(AsyncNotifier&& rhs)noexcept
 {
-    MOE_UV_NEW(AsyncNotifier);
-    object->SetOnAsyncCallback(std::move(callback));
-    return object;
+    AsyncHandle::operator=(std::move(rhs));
+    m_pOnAsync = std::move(rhs.m_pOnAsync);
+    return *this;
+}
+
+void AsyncNotifier::Notify()
+{
+    MOE_UV_GET_HANDLE(::uv_async_t);
+    MOE_UV_CHECK(::uv_async_send(handle));
 }
 
 void AsyncNotifier::OnAsync()

@@ -5,67 +5,76 @@
  */
 #include <Moe.UV/Timer.hpp>
 
-#include <Moe.UV/RunLoop.hpp>
-#include <Moe.Core/Logging.hpp>
+#include "UV.inl"
 
 using namespace std;
 using namespace moe;
 using namespace UV;
 
-//////////////////////////////////////////////////////////////////////////////// TimerBase
-
-void TimerBase::OnUVTimer(::uv_timer_t* handle)noexcept
+Timer Timer::Create()
 {
-    auto* self = GetSelf<TimerBase>(handle);
+    MOE_UV_NEW(::uv_timer_t);
+    MOE_UV_CHECK(::uv_timer_init(GetCurrentUVLoop(), object.get()));
+    return Timer(CastHandle(std::move(object)));
+}
+
+Timer Timer::CreateTickTimer(Time::Tick interval)
+{
+    auto ret = Create();
+    ret.SetFirstTime(interval);
+    ret.SetInterval(interval);
+    return ret;
+}
+
+void Timer::OnUVTimer(::uv_timer_t* handle)noexcept
+{
+    MOE_UV_GET_SELF(Timer);
 
     MOE_UV_CATCH_ALL_BEGIN
         self->OnTime();
     MOE_UV_CATCH_ALL_END
 }
 
-TimerBase::TimerBase()
+Timer::Timer(Timer&& org)noexcept
+    : AsyncHandle(std::move(org)), m_ullFirstTime(org.m_ullFirstTime), m_ullInterval(org.m_ullInterval),
+    m_stOnTime(std::move(org.m_stOnTime))
 {
-    MOE_UV_CHECK(::uv_timer_init(GetCurrentUVLoop(), &m_stHandle));
-    BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
 }
 
-bool TimerBase::Start()noexcept
+Timer& Timer::operator=(Timer&& rhs)noexcept
+{
+    AsyncHandle::operator=(std::move(rhs));
+    m_ullFirstTime = rhs.m_ullFirstTime;
+    m_ullInterval = rhs.m_ullInterval;
+    m_stOnTime = std::move(rhs.m_stOnTime);
+    return *this;
+}
+
+bool Timer::Start()noexcept
 {
     if (IsClosing())
         return false;
+    MOE_UV_GET_HANDLE_NOTHROW(::uv_timer_t);
+    assert(handle);
 
     // 理论上不会抛出错误
-    int ret = ::uv_timer_start(&m_stHandle, OnUVTimer, m_ullFirstTime, m_ullInterval);
+    int ret = ::uv_timer_start(handle, OnUVTimer, m_ullFirstTime, m_ullInterval);
     MOE_UNUSED(ret);
     assert(ret == 0);
     return true;
 }
 
-void TimerBase::Stop()noexcept
+void Timer::Stop()noexcept
 {
     if (IsClosing())
         return;
+    MOE_UV_GET_HANDLE_NOTHROW(::uv_timer_t);
+    assert(handle);
 
     // 理论上总是成功的
-    auto ret = ::uv_timer_stop(&m_stHandle);
+    auto ret = ::uv_timer_stop(handle);
     MOE_UNUSED(ret);
     assert(ret == 0);
-}
-
-//////////////////////////////////////////////////////////////////////////////// Timer
-
-UniqueAsyncHandlePtr<Timer> Timer::Create()
-{
-    MOE_UV_NEW(Timer);
-    return object;
-}
-
-UniqueAsyncHandlePtr<Timer> Timer::CreateTickTimer(Time::Tick interval)
-{
-    MOE_UV_NEW(Timer);
-    object->SetFirstTime(interval);
-    object->SetInterval(interval);
-    return object;
 }
 
 void Timer::OnTime()

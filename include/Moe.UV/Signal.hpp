@@ -8,21 +8,34 @@
 
 #include <functional>
 
+struct uv_signal_s;
+
 namespace moe
 {
 namespace UV
 {
     /**
-     * @brief 信号（基类）
+     * @brief 信号
      */
-    class SignalBase :
+    class Signal :
         public AsyncHandle
     {
+    public:
+        using OnSignalCallbackType = std::function<void(int)>;
+
+        static Signal Create();
+        static Signal Create(const OnSignalCallbackType& callback);
+        static Signal Create(OnSignalCallbackType&& callback);
+
     private:
-        static void OnUVSignal(::uv_signal_t* handle, int signum)noexcept;
+        static void OnUVSignal(::uv_signal_s* handle, int signum)noexcept;
 
     protected:
-        SignalBase();
+        using AsyncHandle::AsyncHandle;
+
+    public:
+        Signal(Signal&& org)noexcept;
+        Signal& operator=(Signal&& rhs)noexcept;
 
     public:
         /**
@@ -36,29 +49,6 @@ namespace UV
          */
         bool Stop()noexcept;
 
-    protected:  // 需要实现
-        virtual void OnSignal(int signum) = 0;
-
-    private:
-        ::uv_signal_t m_stHandle;
-    };
-
-    /**
-     * @brief 信号
-     */
-    class Signal :
-        public SignalBase
-    {
-    public:
-        using OnSignalCallbackType = std::function<void(int)>;
-
-        static UniqueAsyncHandlePtr<Signal> Create();
-        static UniqueAsyncHandlePtr<Signal> Create(const OnSignalCallbackType& callback);
-        static UniqueAsyncHandlePtr<Signal> Create(OnSignalCallbackType&& callback);
-
-    protected:
-        Signal() = default;
-
     public:
         /**
          * @brief 获取事件回调
@@ -70,9 +60,10 @@ namespace UV
          * @param type 事件类型
          */
         void SetOnSignalCallback(const OnSignalCallbackType& cb) { m_pOnSignal = cb; }
+        void SetOnSignalCallback(OnSignalCallbackType&& cb) { m_pOnSignal = std::move(cb); }
 
-    protected:
-        void OnSignal(int signum)override;
+    protected:  // 事件
+        void OnSignal(int signum);
 
     private:
         OnSignalCallbackType m_pOnSignal;

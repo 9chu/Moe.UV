@@ -5,31 +5,42 @@
  */
 #include <Moe.UV/UdpSocket.hpp>
 
-#include <Moe.UV/RunLoop.hpp>
-#include <Moe.Core/Logging.hpp>
+#include "UV.inl"
 
 using namespace std;
 using namespace moe;
 using namespace UV;
 
-//////////////////////////////////////////////////////////////////////////////// UdpSocketBase
+UdpSocket UdpSocket::Create()
+{
+    MOE_UV_NEW(::uv_udp_t);
+    MOE_UV_CHECK(::uv_udp_init(GetCurrentUVLoop(), object.get()));
+    return UdpSocket(CastHandle(std::move(object)));
+}
+
+UdpSocket UdpSocket::Create(const EndPoint& bind, bool reuse, bool ipv6Only)
+{
+    auto ret = Create();
+    ret.Bind(bind, reuse, ipv6Only);
+    return ret;
+}
 
 struct UVSendRequest
 {
     ::uv_udp_send_t Request;
     ::uv_buf_t BufferDesc;
 
-    RefPtr<UdpSocketBase> Parent;
     UniquePooledObject<void> CopiedBuffer;
-    UdpSocketBase::OnSendCallbackType OnSend;
+    UdpSocket::OnSendCallbackType OnSend;
 };
 
-void UdpSocketBase::OnUVSend(::uv_udp_send_t* request, int status)noexcept
+void UdpSocket::OnUVSend(::uv_udp_send_t* request, int status)noexcept
 {
     UniquePooledObject<UVSendRequest> owner;
     owner.reset(static_cast<UVSendRequest*>(request->data));
 
-    auto self = owner->Parent;
+    auto handle = request->handle;
+    MOE_UV_GET_SELF(UdpSocket);
 
     if (status != 0)  // 通知错误发生
     {
@@ -58,7 +69,7 @@ void UdpSocketBase::OnUVSend(::uv_udp_send_t* request, int status)noexcept
     }
 }
 
-void UdpSocketBase::OnUVAllocBuffer(::uv_handle_t* handle, size_t suggestedSize, ::uv_buf_t* buf)noexcept
+void UdpSocket::OnUVAllocBuffer(::uv_handle_t* handle, size_t suggestedSize, ::uv_buf_t* buf)noexcept
 {
     MOE_UNUSED(handle);
 
@@ -71,10 +82,10 @@ void UdpSocketBase::OnUVAllocBuffer(::uv_handle_t* handle, size_t suggestedSize,
     MOE_UV_CATCH_ALL_END
 }
 
-void UdpSocketBase::OnUVRecv(::uv_udp_t* udp, ssize_t nread, const ::uv_buf_t* buf, const ::sockaddr* addr,
+void UdpSocket::OnUVRecv(::uv_udp_t* handle, ssize_t nread, const ::uv_buf_t* buf, const ::sockaddr* addr,
     unsigned flags)noexcept
 {
-    auto* self = GetSelf<UdpSocketBase>(udp);
+    MOE_UV_GET_SELF(UdpSocket);
 
     // 获取所有权，确保调用后对象释放
     UniquePooledObject<void> buffer;
@@ -109,82 +120,96 @@ void UdpSocketBase::OnUVRecv(::uv_udp_t* udp, ssize_t nread, const ::uv_buf_t* b
     }
 }
 
-UdpSocketBase::UdpSocketBase()
+UdpSocket::UdpSocket(UdpSocket&& org)noexcept
+    : AsyncHandle(std::move(org)), m_pOnError(std::move(org.m_pOnError)), m_pOnData(std::move(org.m_pOnData))
 {
-    MOE_UV_CHECK(::uv_udp_init(GetCurrentUVLoop(), &m_stHandle));
-    BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
 }
 
-EndPoint UdpSocketBase::GetLocalEndPoint()const noexcept
+UdpSocket& UdpSocket::operator=(UdpSocket&& rhs)noexcept
+{
+    AsyncHandle::operator=(std::move(rhs));
+    m_pOnError = std::move(rhs.m_pOnError);
+    m_pOnData = std::move(rhs.m_pOnData);
+    return *this;
+}
+
+EndPoint UdpSocket::GetLocalEndPoint()const noexcept
 {
     EndPoint ret;
     if (!IsClosing())
     {
+        MOE_UV_GET_HANDLE_NOTHROW(::uv_udp_t);
+        assert(handle);
+
         int len = sizeof(EndPoint::Storage);
         auto st = reinterpret_cast<sockaddr*>(&ret.Storage);
-        ::uv_udp_getsockname(&m_stHandle, st, &len);
+        ::uv_udp_getsockname(handle, st, &len);
     }
     return ret;
 }
 
-size_t UdpSocketBase::GetSendQueueSize()const noexcept
+size_t UdpSocket::GetSendQueueSize()const noexcept
 {
     if (IsClosing())
         return 0;
-    return ::uv_udp_get_send_queue_size(&m_stHandle);
+
+    MOE_UV_GET_HANDLE_NOTHROW(::uv_udp_t);
+    assert(handle);
+    return ::uv_udp_get_send_queue_size(handle);
 }
 
-size_t UdpSocketBase::GetSendQueueCount()const noexcept
+size_t UdpSocket::GetSendQueueCount()const noexcept
 {
     if (IsClosing())
         return 0;
-    return ::uv_udp_get_send_queue_count(&m_stHandle);
+
+    MOE_UV_GET_HANDLE_NOTHROW(::uv_udp_t);
+    assert(handle);
+    return ::uv_udp_get_send_queue_count(handle);
 }
 
-void UdpSocketBase::SetTTL(int ttl)
+void UdpSocket::SetTTL(int ttl)
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
-    MOE_UV_CHECK(::uv_udp_set_ttl(&m_stHandle, ttl));
+    MOE_UV_GET_HANDLE(::uv_udp_t);
+    MOE_UV_CHECK(::uv_udp_set_ttl(handle, ttl));
 }
 
-void UdpSocketBase::Bind(const EndPoint& address, bool reuse, bool ipv6Only)
+void UdpSocket::Bind(const EndPoint& address, bool reuse, bool ipv6Only)
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    MOE_UV_GET_HANDLE(::uv_udp_t);
 
     unsigned flags = 0;
     flags |= (reuse ? UV_UDP_REUSEADDR : 0);
     flags |= (ipv6Only ? UV_UDP_IPV6ONLY : 0);
-    MOE_UV_CHECK(::uv_udp_bind(&m_stHandle, reinterpret_cast<const sockaddr*>(&address.Storage), flags));
+    MOE_UV_CHECK(::uv_udp_bind(handle, reinterpret_cast<const sockaddr*>(&address.Storage), flags));
 }
 
-void UdpSocketBase::StartRead()
+void UdpSocket::StartRead()
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
-    auto r = ::uv_udp_recv_start(&m_stHandle, OnUVAllocBuffer, OnUVRecv);
+    MOE_UV_GET_HANDLE(::uv_udp_t);
+
+    auto r = ::uv_udp_recv_start(handle, OnUVAllocBuffer, OnUVRecv);
     if (r == UV_EALREADY)
         return;
     MOE_UV_CHECK(r);
 }
 
-bool UdpSocketBase::StopRead()noexcept
+bool UdpSocket::StopRead()noexcept
 {
     if (IsClosing())
         return true;
-    return ::uv_udp_recv_stop(&m_stHandle) == 0;
+    MOE_UV_GET_HANDLE_NOTHROW(::uv_udp_t);
+    assert(handle);
+    return ::uv_udp_recv_stop(handle) == 0;
 }
 
-void UdpSocketBase::Send(const EndPoint& address, BytesView buf)
+void UdpSocket::Send(const EndPoint& address, BytesView buf)
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    MOE_UV_GET_HANDLE(::uv_udp_t);
     if (buf.GetSize() == 0)
         return;
 
-    MOE_UV_NEW_UNIQUE(UVSendRequest);
-    object->Parent = RefFromThis().CastTo<UdpSocketBase>();
+    MOE_UV_NEW(UVSendRequest);
 
     // 分配缓冲区并拷贝数据
     MOE_UV_ALLOC(buf.GetSize());
@@ -194,7 +219,7 @@ void UdpSocketBase::Send(const EndPoint& address, BytesView buf)
     memcpy(object->CopiedBuffer.get(), buf.GetBuffer(), buf.GetSize());
 
     // 发起写操作
-    MOE_UV_CHECK(::uv_udp_send(&object->Request, &m_stHandle, &(object->BufferDesc), 1,
+    MOE_UV_CHECK(::uv_udp_send(&object->Request, handle, &(object->BufferDesc), 1,
         reinterpret_cast<const ::sockaddr*>(&address.Storage), OnUVSend));
 
     // 释放所有权，交由UV管理
@@ -202,21 +227,19 @@ void UdpSocketBase::Send(const EndPoint& address, BytesView buf)
     req.data = object.release();
 }
 
-void UdpSocketBase::SendNoCopy(const EndPoint& address, BytesView buffer, const OnSendCallbackType& cb)
+void UdpSocket::SendNoCopy(const EndPoint& address, BytesView buffer, const OnSendCallbackType& cb)
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    MOE_UV_GET_HANDLE(::uv_udp_t);
     if (buffer.GetSize() == 0)
         MOE_THROW(BadArgumentException, "Buffer is empty");
 
-    MOE_UV_NEW_UNIQUE(UVSendRequest);
-    object->Parent = RefFromThis().CastTo<UdpSocketBase>();
+    MOE_UV_NEW(UVSendRequest);
     object->OnSend = cb;
     object->BufferDesc = ::uv_buf_init(const_cast<char*>(reinterpret_cast<const char*>(buffer.GetBuffer())),
         static_cast<unsigned>(buffer.GetSize()));
 
     // 发起写操作
-    MOE_UV_CHECK(::uv_udp_send(&object->Request, &m_stHandle, &(object->BufferDesc), 1,
+    MOE_UV_CHECK(::uv_udp_send(&object->Request, handle, &(object->BufferDesc), 1,
         reinterpret_cast<const ::sockaddr*>(&address.Storage), OnUVSend));
 
     // 释放所有权，交由UV管理
@@ -224,21 +247,19 @@ void UdpSocketBase::SendNoCopy(const EndPoint& address, BytesView buffer, const 
     req.data = object.release();
 }
 
-void UdpSocketBase::SendNoCopy(const EndPoint& address, BytesView buffer, OnSendCallbackType&& cb)
+void UdpSocket::SendNoCopy(const EndPoint& address, BytesView buffer, OnSendCallbackType&& cb)
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    MOE_UV_GET_HANDLE(::uv_udp_t);
     if (buffer.GetSize() == 0)
         MOE_THROW(BadArgumentException, "Buffer is empty");
 
-    MOE_UV_NEW_UNIQUE(UVSendRequest);
-    object->Parent = RefFromThis().CastTo<UdpSocketBase>();
+    MOE_UV_NEW(UVSendRequest);
     object->OnSend = std::move(cb);
     object->BufferDesc = ::uv_buf_init(const_cast<char*>(reinterpret_cast<const char*>(buffer.GetBuffer())),
         static_cast<unsigned>(buffer.GetSize()));
 
     // 发起写操作
-    MOE_UV_CHECK(::uv_udp_send(&object->Request, &m_stHandle, &(object->BufferDesc), 1,
+    MOE_UV_CHECK(::uv_udp_send(&object->Request, handle, &(object->BufferDesc), 1,
         reinterpret_cast<const ::sockaddr*>(&address.Storage), OnUVSend));
 
     // 释放所有权，交由UV管理
@@ -246,10 +267,9 @@ void UdpSocketBase::SendNoCopy(const EndPoint& address, BytesView buffer, OnSend
     req.data = object.release();
 }
 
-bool UdpSocketBase::TrySend(const EndPoint& address, BytesView buffer)
+bool UdpSocket::TrySend(const EndPoint& address, BytesView buffer)
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Socket has been shutdown");
+    MOE_UV_GET_HANDLE(::uv_udp_t);
     if (buffer.GetSize() == 0)
         MOE_THROW(BadArgumentException, "Buffer is empty");
 
@@ -257,7 +277,7 @@ bool UdpSocketBase::TrySend(const EndPoint& address, BytesView buffer)
         static_cast<unsigned>(buffer.GetSize()));
 
     // 发起写操作
-    auto r = ::uv_udp_try_send(&m_stHandle, &desc, 1, reinterpret_cast<const ::sockaddr*>(&address.Storage));
+    auto r = ::uv_udp_try_send(handle, &desc, 1, reinterpret_cast<const ::sockaddr*>(&address.Storage));
     if (r >= 0)
         return true;
     else if (r == UV_EAGAIN)
@@ -265,22 +285,7 @@ bool UdpSocketBase::TrySend(const EndPoint& address, BytesView buffer)
     MOE_UV_THROW(r);
 }
 
-//////////////////////////////////////////////////////////////////////////////// UdpSocket
-
-UniqueAsyncHandlePtr<UdpSocket> UdpSocket::Create()
-{
-    MOE_UV_NEW(UdpSocket);
-    return object;
-}
-
-UniqueAsyncHandlePtr<UdpSocket> UdpSocket::Create(const EndPoint& bind, bool reuse, bool ipv6Only)
-{
-    MOE_UV_NEW(UdpSocket);
-    object->Bind(bind, reuse, ipv6Only);
-    return object;
-}
-
-void UdpSocket::OnError(::uv_errno_t error)
+void UdpSocket::OnError(int error)
 {
     if (m_pOnError)
         m_pOnError(error);

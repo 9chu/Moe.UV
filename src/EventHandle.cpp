@@ -5,78 +5,120 @@
  */
 #include <Moe.UV/EventHandle.hpp>
 
-#include <Moe.Core/Logging.hpp>
-#include <Moe.UV/RunLoop.hpp>
+#include "UV.inl"
 
 using namespace std;
 using namespace moe;
 using namespace UV;
 
-//////////////////////////////////////////////////////////////////////////////// EventHandleBase
-
-void EventHandleBase::OnUVPrepare(::uv_prepare_t* handle)noexcept
-{
-    auto* self = GetSelf<EventHandleBase>(handle);
-
-    MOE_UV_CATCH_ALL_BEGIN
-        self->OnEvent();
-    MOE_UV_CATCH_ALL_END
-}
-
-void EventHandleBase::OnUVIdle(::uv_idle_t* handle)noexcept
-{
-    auto* self = GetSelf<EventHandleBase>(handle);
-
-    MOE_UV_CATCH_ALL_BEGIN
-        self->OnEvent();
-    MOE_UV_CATCH_ALL_END
-}
-
-void EventHandleBase::OnUVCheck(::uv_check_t* handle)noexcept
-{
-    auto* self = GetSelf<EventHandleBase>(handle);
-
-    MOE_UV_CATCH_ALL_BEGIN
-        self->OnEvent();
-    MOE_UV_CATCH_ALL_END
-}
-
-EventHandleBase::EventHandleBase(EventType type)
-    : m_uEventType(type)
+EventHandle EventHandle::Create(EventType type)
 {
     switch (type)
     {
         case EventType::Prepare:
-            MOE_UV_CHECK(::uv_prepare_init(GetCurrentUVLoop(), &m_stHandle.Prepare));
-            break;
+            {
+                MOE_UV_NEW(::uv_prepare_t);
+                MOE_UV_CHECK(::uv_prepare_init(GetCurrentUVLoop(), object.get()));
+                return EventHandle(type, CastHandle(std::move(object)));
+            }
         case EventType::Idle:
-            MOE_UV_CHECK(::uv_idle_init(GetCurrentUVLoop(), &m_stHandle.Idle));
-            break;
+            {
+                MOE_UV_NEW(::uv_idle_t);
+                MOE_UV_CHECK(::uv_idle_init(GetCurrentUVLoop(), object.get()));
+                return EventHandle(type, CastHandle(std::move(object)));
+            }
         case EventType::Check:
-            MOE_UV_CHECK(::uv_check_init(GetCurrentUVLoop(), &m_stHandle.Check));
-            break;
+            {
+                MOE_UV_NEW(::uv_check_t);
+                MOE_UV_CHECK(::uv_check_init(GetCurrentUVLoop(), object.get()));
+                return EventHandle(type, CastHandle(std::move(object)));
+            }
         default:
             assert(false);
             MOE_THROW(InvalidCallException, "Bad param");
     }
-    BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
 }
 
-void EventHandleBase::Start()
+EventHandle EventHandle::Create(EventType type, const OnEventCallbackType& callback)
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Object is already closed");
+    auto ret = Create(type);
+    ret.SetOnEventCallback(callback);
+    return ret;
+}
 
+EventHandle EventHandle::Create(EventType type, OnEventCallbackType&& callback)
+{
+    auto ret = Create(type);
+    ret.SetOnEventCallback(std::move(callback));
+    return ret;
+}
+
+void EventHandle::OnUVPrepare(::uv_prepare_t* handle)noexcept
+{
+    auto* self = GetSelf<EventHandle>(handle);
+
+    MOE_UV_CATCH_ALL_BEGIN
+        self->OnEvent();
+    MOE_UV_CATCH_ALL_END
+}
+
+void EventHandle::OnUVIdle(::uv_idle_t* handle)noexcept
+{
+    auto* self = GetSelf<EventHandle>(handle);
+
+    MOE_UV_CATCH_ALL_BEGIN
+        self->OnEvent();
+    MOE_UV_CATCH_ALL_END
+}
+
+void EventHandle::OnUVCheck(::uv_check_t* handle)noexcept
+{
+    auto* self = GetSelf<EventHandle>(handle);
+
+    MOE_UV_CATCH_ALL_BEGIN
+        self->OnEvent();
+    MOE_UV_CATCH_ALL_END
+}
+
+EventHandle::EventHandle(EventType type, UniquePooledObject<::uv_handle_s>&& handle)
+    : AsyncHandle(std::move(handle)), m_uEventType(type)
+{
+}
+
+EventHandle::EventHandle(EventHandle&& org)noexcept
+    : AsyncHandle(std::move(org)), m_uEventType(org.m_uEventType), m_pOnEvent(std::move(org.m_pOnEvent))
+{
+}
+
+EventHandle& EventHandle::operator=(EventHandle&& rhs)noexcept
+{
+    AsyncHandle::operator=(std::move(rhs));
+    m_uEventType = rhs.m_uEventType;
+    m_pOnEvent = std::move(rhs.m_pOnEvent);
+    return *this;
+}
+
+void EventHandle::Start()
+{
     switch (m_uEventType)
     {
         case EventType::Prepare:
-            MOE_UV_CHECK(::uv_prepare_start(&m_stHandle.Prepare, OnUVPrepare));
+            {
+                MOE_UV_GET_HANDLE(::uv_prepare_t);
+                MOE_UV_CHECK(::uv_prepare_start(handle, OnUVPrepare));
+            }
             break;
         case EventType::Idle:
-            MOE_UV_CHECK(::uv_idle_start(&m_stHandle.Idle, OnUVIdle));
+            {
+                MOE_UV_GET_HANDLE(::uv_idle_t);
+                MOE_UV_CHECK(::uv_idle_start(handle, OnUVIdle));
+            }
             break;
         case EventType::Check:
-            MOE_UV_CHECK(::uv_check_start(&m_stHandle.Check, OnUVCheck));
+            {
+                MOE_UV_GET_HANDLE(::uv_check_t);
+                MOE_UV_CHECK(::uv_check_start(handle, OnUVCheck));
+            }
             break;
         default:
             assert(false);
@@ -84,7 +126,7 @@ void EventHandleBase::Start()
     }
 }
 
-bool EventHandleBase::Stop()noexcept
+bool EventHandle::Stop()noexcept
 {
     if (IsClosing())
         return false;
@@ -92,37 +134,27 @@ bool EventHandleBase::Stop()noexcept
     switch (m_uEventType)
     {
         case EventType::Prepare:
-            return ::uv_prepare_stop(&m_stHandle.Prepare) == 0;
+            {
+                MOE_UV_GET_HANDLE_NOTHROW(::uv_prepare_t);
+                assert(handle);
+                return ::uv_prepare_stop(handle) == 0;
+            }
         case EventType::Idle:
-            return ::uv_idle_stop(&m_stHandle.Idle) == 0;
+            {
+                MOE_UV_GET_HANDLE_NOTHROW(::uv_idle_t);
+                assert(handle);
+                return ::uv_idle_stop(handle) == 0;
+            }
         case EventType::Check:
-            return ::uv_check_stop(&m_stHandle.Check) == 0;
+            {
+                MOE_UV_GET_HANDLE_NOTHROW(::uv_check_t);
+                assert(handle);
+                return ::uv_check_stop(handle) == 0;
+            }
         default:
             assert(false);
             return false;
     }
-}
-
-//////////////////////////////////////////////////////////////////////////////// EventHandle
-
-UniqueAsyncHandlePtr<EventHandle> EventHandle::Create(EventType type)
-{
-    MOE_UV_NEW(EventHandle, type);
-    return object;
-}
-
-UniqueAsyncHandlePtr<EventHandle> EventHandle::Create(EventType type, const OnEventCallbackType& callback)
-{
-    MOE_UV_NEW(EventHandle, type);
-    object->SetOnEventCallback(callback);
-    return object;
-}
-
-UniqueAsyncHandlePtr<EventHandle> EventHandle::Create(EventType type, OnEventCallbackType&& callback)
-{
-    MOE_UV_NEW(EventHandle, type);
-    object->SetOnEventCallback(std::move(callback));
-    return object;
 }
 
 void EventHandle::OnEvent()

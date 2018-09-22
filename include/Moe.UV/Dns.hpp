@@ -20,10 +20,10 @@ namespace UV
     class Dns
     {
     public:
-        using OnResolveCallbackType = std::function<void(uv_errno_t, const EndPoint&)>;
-        using OnResolveAllCallbackType = std::function<void(uv_errno_t, const std::vector<EndPoint>&)>;
+        using OnResolveCallbackType = std::function<void(int, const EndPoint&)>;
+        using OnResolveAllCallbackType = std::function<void(int, const std::vector<EndPoint>&)>;
         // (status, hostname, service)
-        using OnReverseResolveCallbackType = std::function<void(uv_errno_t, const std::string&, const std::string&)>;
+        using OnReverseResolveCallbackType = std::function<void(int, const std::string&, const std::string&)>;
 
         /**
          * @brief 解析地址

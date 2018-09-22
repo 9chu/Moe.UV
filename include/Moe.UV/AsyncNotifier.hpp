@@ -8,21 +8,34 @@
 
 #include <functional>
 
+struct uv_async_s;
+
 namespace moe
 {
 namespace UV
 {
     /**
-     * @brief 异步唤醒对象（基类）
+     * @brief 异步唤醒对象
      */
-    class AsyncNotifierBase :
+    class AsyncNotifier :
         public AsyncHandle
     {
+    public:
+        using OnAsyncCallbackType = std::function<void()>;
+
+        static AsyncNotifier Create();
+        static AsyncNotifier Create(const OnAsyncCallbackType& callback);
+        static AsyncNotifier Create(OnAsyncCallbackType&& callback);
+
     private:
-        static void OnUVAsync(::uv_async_t* handle)noexcept;
+        static void OnUVAsync(::uv_async_s* handle)noexcept;
 
     protected:
-        AsyncNotifierBase();
+        using AsyncHandle::AsyncHandle;
+
+    public:
+        AsyncNotifier(AsyncNotifier&& org)noexcept;
+        AsyncNotifier& operator=(AsyncNotifier&& rhs)noexcept;
 
     public:
         /**
@@ -31,29 +44,6 @@ namespace UV
          * 方法为线程安全。
          */
         void Notify();
-
-    protected:  // 需要实现
-        virtual void OnAsync() = 0;
-
-    private:
-        ::uv_async_t m_stHandle;
-    };
-
-    /**
-     * @brief 异步唤醒对象
-     */
-    class AsyncNotifier :
-        public AsyncNotifierBase
-    {
-    public:
-        using OnAsyncCallbackType = std::function<void()>;
-
-        static UniqueAsyncHandlePtr<AsyncNotifier> Create();
-        static UniqueAsyncHandlePtr<AsyncNotifier> Create(const OnAsyncCallbackType& callback);
-        static UniqueAsyncHandlePtr<AsyncNotifier> Create(OnAsyncCallbackType&& callback);
-
-    protected:
-        AsyncNotifier() = default;
 
     public:
         /**
@@ -66,9 +56,10 @@ namespace UV
          * @param type 事件类型
          */
         void SetOnAsyncCallback(const OnAsyncCallbackType& cb) { m_pOnAsync = cb; }
+        void SetOnAsyncCallback(OnAsyncCallbackType&& cb) { m_pOnAsync = std::move(cb); }
 
-    protected:
-        void OnAsync()override;
+    protected:  // 事件
+        void OnAsync();
 
     private:
         OnAsyncCallbackType m_pOnAsync;

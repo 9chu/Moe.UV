@@ -5,6 +5,8 @@
  */
 #include <Moe.UV/Environment.hpp>
 
+#include "UV.inl"
+
 using namespace std;
 using namespace moe;
 using namespace UV;

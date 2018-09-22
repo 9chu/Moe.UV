@@ -5,64 +5,67 @@
  */
 #include <Moe.UV/Signal.hpp>
 
-#include <Moe.Core/Logging.hpp>
-#include <Moe.UV/RunLoop.hpp>
+#include "UV.inl"
 
 using namespace std;
 using namespace moe;
 using namespace UV;
 
-//////////////////////////////////////////////////////////////////////////////// SignalBase
-
-void SignalBase::OnUVSignal(::uv_signal_t* handle, int signum)noexcept
+Signal Signal::Create()
 {
-    auto* self = GetSelf<SignalBase>(handle);
+    MOE_UV_NEW(::uv_signal_t);
+    MOE_UV_CHECK(::uv_signal_init(GetCurrentUVLoop(), object.get()));
+    return Signal(CastHandle(std::move(object)));
+}
+
+Signal Signal::Create(const OnSignalCallbackType& callback)
+{
+    auto ret = Create();
+    ret.SetOnSignalCallback(callback);
+    return ret;
+}
+
+Signal Signal::Create(OnSignalCallbackType&& callback)
+{
+    auto ret = Create();
+    ret.SetOnSignalCallback(std::move(callback));
+    return ret;
+}
+
+void Signal::OnUVSignal(::uv_signal_t* handle, int signum)noexcept
+{
+    MOE_UV_GET_SELF(Signal);
 
     MOE_UV_CATCH_ALL_BEGIN
         self->OnSignal(signum);
     MOE_UV_CATCH_ALL_END
 }
 
-SignalBase::SignalBase()
+Signal::Signal(Signal&& org)noexcept
+    : AsyncHandle(std::move(org)), m_pOnSignal(std::move(org.m_pOnSignal))
 {
-    MOE_UV_CHECK(::uv_signal_init(GetCurrentUVLoop(), &m_stHandle));
-    BindHandle(reinterpret_cast<::uv_handle_t*>(&m_stHandle));
 }
 
-void SignalBase::Start(int signum)
+Signal& Signal::operator=(Signal&& rhs)noexcept
 {
-    if (IsClosing())
-        MOE_THROW(InvalidCallException, "Signal is already closed");
-    MOE_UV_CHECK(::uv_signal_start(&m_stHandle, OnUVSignal, signum));
+    AsyncHandle::operator=(std::move(rhs));
+    m_pOnSignal = std::move(rhs.m_pOnSignal);
+    return *this;
 }
 
-bool SignalBase::Stop()noexcept
+void Signal::Start(int signum)
+{
+    MOE_UV_GET_HANDLE(::uv_signal_t);
+    MOE_UV_CHECK(::uv_signal_start(handle, OnUVSignal, signum));
+}
+
+bool Signal::Stop()noexcept
 {
     if (IsClosing())
         return false;
-    return ::uv_signal_stop(&m_stHandle) == 0;
-}
-
-//////////////////////////////////////////////////////////////////////////////// Signal
-
-UniqueAsyncHandlePtr<Signal> Signal::Create()
-{
-    MOE_UV_NEW(Signal);
-    return object;
-}
-
-UniqueAsyncHandlePtr<Signal> Signal::Create(const OnSignalCallbackType& callback)
-{
-    MOE_UV_NEW(Signal);
-    object->SetOnSignalCallback(callback);
-    return object;
-}
-
-UniqueAsyncHandlePtr<Signal> Signal::Create(OnSignalCallbackType&& callback)
-{
-    MOE_UV_NEW(Signal);
-    object->SetOnSignalCallback(std::move(callback));
-    return object;
+    MOE_UV_GET_HANDLE_NOTHROW(::uv_signal_t);
+    assert(handle);
+    return ::uv_signal_stop(handle) == 0;
 }
 
 void Signal::OnSignal(int signum)

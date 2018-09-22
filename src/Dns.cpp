@@ -5,8 +5,7 @@
  */
 #include <Moe.UV/Dns.hpp>
 
-#include <Moe.UV/RunLoop.hpp>
-#include <Moe.Core/Logging.hpp>
+#include "UV.inl"
 
 using namespace std;
 using namespace moe;
@@ -145,60 +144,60 @@ struct UVGetNameInfoReq
 
 void Dns::Resolve(const char* hostname, const OnResolveCallbackType& cb)
 {
-    MOE_UV_NEW_UNIQUE(UVGetAddrInfoReq);
+    MOE_UV_NEW(UVGetAddrInfoReq);
     object->OnResolveOne = cb;
 
-    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname,
-        nullptr, nullptr));
+    MOE_UV_CHECK(::uv_getaddrinfo(GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname, nullptr,
+        nullptr));
     MOVE_OWNER_SELF;
 }
 
 void Dns::Resolve(const char* hostname, OnResolveCallbackType&& cb)
 {
-    MOE_UV_NEW_UNIQUE(UVGetAddrInfoReq);
+    MOE_UV_NEW(UVGetAddrInfoReq);
     object->OnResolveOne = std::move(cb);
 
-    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname,
-        nullptr, nullptr));
+    MOE_UV_CHECK(::uv_getaddrinfo(GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname, nullptr,
+        nullptr));
     MOVE_OWNER_SELF;
 }
 
 void Dns::ResolveAll(const char* hostname, const OnResolveAllCallbackType& cb)
 {
-    MOE_UV_NEW_UNIQUE(UVGetAddrInfoReq);
+    MOE_UV_NEW(UVGetAddrInfoReq);
     object->OnResolveAll = cb;
 
-    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname,
-        nullptr, nullptr));
+    MOE_UV_CHECK(::uv_getaddrinfo(GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname, nullptr,
+        nullptr));
     MOVE_OWNER_SELF;
 }
 
 void Dns::ResolveAll(const char* hostname, OnResolveAllCallbackType&& cb)
 {
-    MOE_UV_NEW_UNIQUE(UVGetAddrInfoReq);
+    MOE_UV_NEW(UVGetAddrInfoReq);
     object->OnResolveAll = std::move(cb);
 
-    MOE_UV_CHECK(::uv_getaddrinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname,
-        nullptr, nullptr));
+    MOE_UV_CHECK(::uv_getaddrinfo(GetCurrentUVLoop(), &object->Request, UVGetAddrInfoReq::Callback, hostname, nullptr,
+        nullptr));
     MOVE_OWNER_SELF;
 }
 
 void Dns::ReverseResolve(const EndPoint& address, const OnReverseResolveCallbackType& cb)
 {
-    MOE_UV_NEW_UNIQUE(UVGetNameInfoReq);
+    MOE_UV_NEW(UVGetNameInfoReq);
     object->OnReverseResolve = cb;
 
-    MOE_UV_CHECK(::uv_getnameinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetNameInfoReq::Callback,
+    MOE_UV_CHECK(::uv_getnameinfo(GetCurrentUVLoop(), &object->Request, UVGetNameInfoReq::Callback,
         reinterpret_cast<const ::sockaddr*>(&address.Storage), 0));
     MOVE_OWNER_SELF;
 }
 
 void Dns::ReverseResolve(const EndPoint& address, OnReverseResolveCallbackType&& cb)
 {
-    MOE_UV_NEW_UNIQUE(UVGetNameInfoReq);
+    MOE_UV_NEW(UVGetNameInfoReq);
     object->OnReverseResolve = std::move(cb);
 
-    MOE_UV_CHECK(::uv_getnameinfo(RunLoop::GetCurrentUVLoop(), &object->Request, UVGetNameInfoReq::Callback,
+    MOE_UV_CHECK(::uv_getnameinfo(GetCurrentUVLoop(), &object->Request, UVGetNameInfoReq::Callback,
         reinterpret_cast<const ::sockaddr*>(&address.Storage), 0));
     MOVE_OWNER_SELF;
 }

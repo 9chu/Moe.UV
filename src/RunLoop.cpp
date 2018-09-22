@@ -8,14 +8,13 @@
 #include <chrono>
 #include <thread>
 
-#include <Moe.Core/Exception.hpp>
-#include <Moe.Core/Logging.hpp>
+#include "UV.inl"
 
 using namespace std;
 using namespace moe;
 using namespace UV;
 
-static thread_local RunLoop* t_pRunLoop = nullptr;
+thread_local static RunLoop* t_pRunLoop = nullptr;
 
 RunLoop* RunLoop::GetCurrent()noexcept
 {
@@ -27,15 +26,7 @@ Time::Tick RunLoop::Now()noexcept
     auto self = GetCurrent();
     if (!self)
         return ::uv_hrtime();
-    return ::uv_now(&self->m_stLoop);
-}
-
-::uv_loop_t* RunLoop::GetCurrentUVLoop()
-{
-    auto self = GetCurrent();
-    if (!self)
-        MOE_THROW(InvalidCallException, "Bad execution context");
-    return &self->m_stLoop;
+    return ::uv_now(self->GetHandle());
 }
 
 void RunLoop::UVClosingHandleWalker(::uv_handle_t* handle, void* arg)noexcept
@@ -61,7 +52,16 @@ RunLoop::RunLoop(ObjectPool& pool)
     if (t_pRunLoop)
         MOE_THROW(InvalidCallException, "RunLoop is already existed");
 
-    MOE_UV_CHECK(::uv_loop_init(&m_stLoop));
+    // 此处不能使用MOE_UV_NEW
+#ifndef NDEBUG
+    auto p = GetObjectPool().Alloc(sizeof(uv_loop_t), ObjectPool::AllocContext(__FILE__, __LINE__));
+#else
+    auto p = GetObjectPool().Alloc(sizeof(uv_loop_t));
+#endif
+    m_pHandle.reset(new(p.get()) uv_loop_t());
+    p.release();
+
+    MOE_UV_CHECK(::uv_loop_init(GetHandle()));
 
     t_pRunLoop = this;
 }
@@ -73,21 +73,21 @@ RunLoop::~RunLoop()
     m_bClosing = true;
 
     // 关闭所有句柄
-    auto start = ::uv_now(&m_stLoop);
-    while (::uv_loop_alive(&m_stLoop))
+    auto start = ::uv_now(GetHandle());
+    while (::uv_loop_alive(GetHandle()))
     {
         ForceCloseAllHandle();
-        ::uv_run(&m_stLoop, UV_RUN_ONCE);
+        ::uv_run(GetHandle(), UV_RUN_ONCE);
 
         this_thread::yield();
 
-        auto now = ::uv_now(&m_stLoop);
+        auto now = ::uv_now(GetHandle());
         if (now - start > kMaxLoopTimeout)
             break;  // 超时N秒
     }
 
     // 关闭Loop句柄
-    int ret = ::uv_loop_close(&m_stLoop);
+    int ret = ::uv_loop_close(GetHandle());
     if (ret != 0)
     {
         MOE_UV_LOG_ERROR(ret);
@@ -100,27 +100,32 @@ RunLoop::~RunLoop()
     t_pRunLoop = nullptr;
 }
 
+::uv_loop_s* RunLoop::GetHandle()const noexcept
+{
+    return m_pHandle.get();
+}
+
 void RunLoop::Run()
 {
-    ::uv_run(&m_stLoop, UV_RUN_DEFAULT);
+    ::uv_run(GetHandle(), UV_RUN_DEFAULT);
 }
 
 void RunLoop::Stop()noexcept
 {
-    ::uv_stop(&m_stLoop);
+    ::uv_stop(GetHandle());
 }
 
 void RunLoop::RunOnce(bool wait)
 {
-    ::uv_run(&m_stLoop, wait ? UV_RUN_ONCE : UV_RUN_NOWAIT);
+    ::uv_run(GetHandle(), wait ? UV_RUN_ONCE : UV_RUN_NOWAIT);
 }
 
 void RunLoop::ForceCloseAllHandle()noexcept
 {
-    ::uv_walk(&m_stLoop, UVClosingHandleWalker, this);
+    ::uv_walk(GetHandle(), UVClosingHandleWalker, this);
 }
 
 void RunLoop::UpdateTime()noexcept
 {
-    ::uv_update_time(&m_stLoop);
+    ::uv_update_time(GetHandle());
 }
