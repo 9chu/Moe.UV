@@ -49,8 +49,9 @@ namespace UV
         /**
          * @brief 构造消息循环
          * @param pool 共享的内存池
+         * @param useDefaultLoop 是否使用默认的循环，如果设为true，将不会拥有所有权
          */
-        RunLoop(ObjectPool& pool);
+        RunLoop(ObjectPool& pool, bool useDefaultLoop=false);
         ~RunLoop();
 
         RunLoop(RunLoop&&)noexcept = delete;
