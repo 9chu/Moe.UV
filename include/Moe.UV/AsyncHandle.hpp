@@ -26,6 +26,19 @@ namespace UV
     {
         friend class RunLoop;
 
+    public:
+        /**
+         * @brief 句柄转数据
+         *
+         * 为了使得Moe.UV支持外部库共享libuv，针对Moe.UV的句柄在指针最高位设置为1进行区分。
+         */
+        static void* HandleToData(AsyncHandle* data)noexcept;
+
+        /**
+         * @brief 数据转句柄
+         */
+        static AsyncHandle* DataToHandle(void* data)noexcept;
+
     protected:
         static void OnUVClose(::uv_handle_s* handle)noexcept;
 
@@ -80,7 +93,7 @@ namespace UV
          */
         virtual void OnClose();
 
-    protected:
+    private:
         UniquePooledObject<::uv_handle_s> m_pHandle;
         bool m_bHandleClosed = true;
     };

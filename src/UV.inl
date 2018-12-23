@@ -16,7 +16,7 @@ namespace
     template <typename T, typename P>
     T* GetSelf(P* handle)
     {
-        auto* base = static_cast<moe::UV::AsyncHandle*>(handle->data);
+        auto* base = moe::UV::AsyncHandle::DataToHandle(handle->data);
         if (!base)
             return nullptr;
         return static_cast<T*>(base);

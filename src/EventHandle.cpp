@@ -55,7 +55,7 @@ EventHandle EventHandle::Create(EventType type, OnEventCallbackType&& callback)
 
 void EventHandle::OnUVPrepare(::uv_prepare_t* handle)noexcept
 {
-    auto* self = GetSelf<EventHandle>(handle);
+    MOE_UV_GET_SELF(EventHandle);
 
     MOE_UV_CATCH_ALL_BEGIN
         self->OnEvent();
@@ -64,7 +64,7 @@ void EventHandle::OnUVPrepare(::uv_prepare_t* handle)noexcept
 
 void EventHandle::OnUVIdle(::uv_idle_t* handle)noexcept
 {
-    auto* self = GetSelf<EventHandle>(handle);
+    MOE_UV_GET_SELF(EventHandle);
 
     MOE_UV_CATCH_ALL_BEGIN
         self->OnEvent();
@@ -73,7 +73,7 @@ void EventHandle::OnUVIdle(::uv_idle_t* handle)noexcept
 
 void EventHandle::OnUVCheck(::uv_check_t* handle)noexcept
 {
-    auto* self = GetSelf<EventHandle>(handle);
+    MOE_UV_GET_SELF(EventHandle);
 
     MOE_UV_CATCH_ALL_BEGIN
         self->OnEvent();

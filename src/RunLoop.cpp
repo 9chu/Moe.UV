@@ -36,13 +36,10 @@ void RunLoop::UVClosingHandleWalker(::uv_handle_t* handle, void* arg)noexcept
 
     if (!::uv_is_closing(handle))
     {
-        if (handle->data != nullptr)
+        if (AsyncHandle::DataToHandle(handle->data))
             ::uv_close(handle, AsyncHandle::OnUVClose);
         else
-        {
-            assert(false);
-            ::uv_close(handle, nullptr);
-        }
+            ::uv_close(handle, nullptr);  // 外部库共享libuv的句柄
     }
 }
 
