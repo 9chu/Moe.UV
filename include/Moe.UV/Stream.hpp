@@ -9,9 +9,10 @@
 #include <functional>
 
 // fvck Windows
-#if defined(_MSC_VER)
-#include <BaseTsd.h>
-typedef SSIZE_T ssize_t;
+#if defined(_MSC_VER) && !defined(_SSIZE_T_) && !defined(_SSIZE_T_DEFINED)
+typedef intptr_t ssize_t;
+#define _SSIZE_T_
+#define _SSIZE_T_DEFINED
 #endif
 
 struct uv_shutdown_s;
