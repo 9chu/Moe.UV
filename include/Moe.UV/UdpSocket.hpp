@@ -9,6 +9,12 @@
 
 #include <functional>
 
+// fvck Windows
+#if defined(_MSC_VER)
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
 struct uv_udp_send_s;
 struct uv_udp_s;
 struct uv_buf_t;

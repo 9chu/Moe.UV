@@ -3,6 +3,15 @@
 
 #include <uv.h>
 
+// fvck Windows
+#ifdef min
+#undef min
+#endif
+
+#ifdef max
+#undef max
+#endif
+
 namespace
 {
     ::uv_loop_t* GetCurrentUVLoop()

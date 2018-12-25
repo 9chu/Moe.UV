@@ -8,6 +8,12 @@
 
 #include <functional>
 
+// fvck Windows
+#if defined(_MSC_VER)
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
 struct uv_shutdown_s;
 struct uv_write_s;
 struct uv_stream_s;
