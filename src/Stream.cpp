@@ -108,10 +108,14 @@ void Stream::OnUVRead(::uv_stream_s* handle, ssize_t nread, const ::uv_buf_t* bu
     if (nread < 0)  // 通知错误发生
     {
         MOE_UV_CATCH_ALL_BEGIN
-            self->OnError(static_cast<uv_errno_t>(nread));
+            if (nread == UV_EOF)
+                self->OnEof();
+            else
+            {
+                self->OnError(static_cast<uv_errno_t>(nread));
+                self->Close();  // 发生错误时直接关闭Socket
+            }
         MOE_UV_CATCH_ALL_END
-
-        self->Close();  // 发生错误时直接关闭Socket
     }
     else if (nread > 0)
     {
@@ -124,7 +128,7 @@ void Stream::OnUVRead(::uv_stream_s* handle, ssize_t nread, const ::uv_buf_t* bu
 
 Stream::Stream(Stream&& org)noexcept
     : AsyncHandle(std::move(org)), m_pOnError(std::move(org.m_pOnError)), m_pOnShutdown(std::move(org.m_pOnShutdown)),
-    m_pOnData(std::move(org.m_pOnData))
+    m_pOnData(std::move(org.m_pOnData)), m_pOnEof(std::move(org.m_pOnEof))
 {
 }
 
@@ -134,6 +138,7 @@ Stream& Stream::operator=(Stream&& rhs)noexcept
     m_pOnError = std::move(rhs.m_pOnError);
     m_pOnShutdown = std::move(rhs.m_pOnShutdown);
     m_pOnData = std::move(rhs.m_pOnData);
+    m_pOnEof = std::move(rhs.m_pOnEof);
     return *this;
 }
 
@@ -287,4 +292,10 @@ void Stream::OnData(BytesView data)
 {
     if (m_pOnData)
         m_pOnData(data);
+}
+
+void Stream::OnEof()
+{
+    if (m_pOnEof)
+        m_pOnEof();
 }

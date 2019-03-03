@@ -37,6 +37,7 @@ namespace UV
         using OnErrorCallbackType = std::function<void(int)>;
         using OnShutdownCallbackType = std::function<void()>;
         using OnDataCallbackType = std::function<void(BytesView)>;
+        using OnEofCallbackType = std::function<void()>;
 
     private:
         static void OnUVShutdown(::uv_shutdown_s* request, int status)noexcept;
@@ -121,15 +122,21 @@ namespace UV
         void SetOnDataCallback(const OnDataCallbackType& cb) { m_pOnData = cb; }
         void SetOnDataCallback(OnDataCallbackType&& cb)noexcept { m_pOnData = std::move(cb); }
 
+        const OnEofCallbackType& GetOnEofCallback()const noexcept { return m_pOnEof; }
+        void SetOnEofCallback(const OnEofCallbackType& cb) { m_pOnEof = cb; }
+        void SetOnEofCallback(OnEofCallbackType&& cb)noexcept { m_pOnEof = std::move(cb); }
+
     protected:  // 事件
         void OnError(int error);
         void OnShutdown();
         void OnData(BytesView data);
+        void OnEof();
 
     private:
         OnErrorCallbackType m_pOnError;
         OnShutdownCallbackType m_pOnShutdown;
         OnDataCallbackType m_pOnData;
+        OnEofCallbackType m_pOnEof;
     };
 }
 }
