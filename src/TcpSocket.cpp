@@ -31,20 +31,9 @@ void TcpSocket::OnUVConnect(::uv_connect_s* request, int status)noexcept
     auto handle = request->handle;
     MOE_UV_GET_SELF(TcpSocket);
 
-    if (status != 0)  // 通知错误发生
-    {
-        MOE_UV_CATCH_ALL_BEGIN
-            self->OnError(static_cast<uv_errno_t>(status));
-        MOE_UV_CATCH_ALL_END
-
-        self->Close();  // 发生错误时直接关闭Socket
-    }
-    else
-    {
-        MOE_UV_CATCH_ALL_BEGIN
-            self->OnConnect();
-        MOE_UV_CATCH_ALL_END
-    }
+    MOE_UV_CATCH_ALL_BEGIN
+        self->OnConnect(static_cast<uv_errno_t>(status));
+    MOE_UV_CATCH_ALL_END
 }
 
 void TcpSocket::OnUVConnection(::uv_stream_s* handle, int status)noexcept
@@ -57,7 +46,8 @@ void TcpSocket::OnUVConnection(::uv_stream_s* handle, int status)noexcept
             self->OnError(static_cast<uv_errno_t>(status));
         MOE_UV_CATCH_ALL_END
 
-        self->Close();  // 发生错误时直接关闭Socket
+        if (GetSelf<TcpSocket>(handle) == self)
+            self->Close();  // 发生错误时直接关闭Socket
     }
     else
     {
@@ -161,10 +151,10 @@ EndPoint TcpSocket::GetPeerName()
     return ep;
 }
 
-void TcpSocket::OnConnect()
+void TcpSocket::OnConnect(int error)
 {
     if (m_pOnConnect)
-        m_pOnConnect();
+        m_pOnConnect(error);
 }
 
 void TcpSocket::OnConnection()

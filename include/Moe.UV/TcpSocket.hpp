@@ -22,7 +22,7 @@ namespace UV
         public Stream
     {
     public:
-        using OnConnectCallbackType = std::function<void()>;
+        using OnConnectCallbackType = std::function<void(int)>;
         using OnConnectionCallbackType = std::function<void()>;
 
         static TcpSocket Create();
@@ -109,7 +109,7 @@ namespace UV
         void SetOnConnectionCallback(OnConnectionCallbackType&& cb)noexcept { m_pOnConnection = std::move(cb); }
 
     protected:  // 事件
-        void OnConnect();
+        void OnConnect(int error);
         void OnConnection();
 
     private:

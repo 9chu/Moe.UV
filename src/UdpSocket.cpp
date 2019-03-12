@@ -51,11 +51,15 @@ void UdpSocket::OnUVSend(::uv_udp_send_t* request, int status)noexcept
             MOE_UV_CATCH_ALL_END
         }
 
-        MOE_UV_CATCH_ALL_BEGIN
-            self->OnError(static_cast<uv_errno_t>(status));
-        MOE_UV_CATCH_ALL_END
+        if (GetSelf<UdpSocket>(handle) == self)  // 由于穿越回调函数，需要检查所有权
+        {
+            MOE_UV_CATCH_ALL_BEGIN
+                self->OnError(static_cast<uv_errno_t>(status));
+            MOE_UV_CATCH_ALL_END
 
-        self->Close();  // 发生错误时直接关闭Socket
+            if (GetSelf<UdpSocket>(handle) == self)
+                self->Close();  // 发生错误时直接关闭Socket
+        }
     }
     else
     {
@@ -97,7 +101,8 @@ void UdpSocket::OnUVRecv(::uv_udp_t* handle, ssize_t nread, const ::uv_buf_t* bu
             self->OnError(static_cast<uv_errno_t>(nread));
         MOE_UV_CATCH_ALL_END
 
-        self->Close();  // 发生错误时直接关闭Socket
+        if (GetSelf<UdpSocket>(handle) == self)
+            self->Close();  // 发生错误时直接关闭Socket
     }
     else if (nread > 0)
     {

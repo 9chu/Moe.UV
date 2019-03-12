@@ -37,7 +37,8 @@ void Pipe::OnUVConnect(::uv_connect_t* request, int status)noexcept
             self->OnError(static_cast<uv_errno_t>(status));
         MOE_UV_CATCH_ALL_END
 
-        self->Close();  // 发生错误时直接关闭Socket
+        if (GetSelf<Pipe>(handle) == self)
+            self->Close();  // 发生错误时直接关闭Socket
     }
     else
     {

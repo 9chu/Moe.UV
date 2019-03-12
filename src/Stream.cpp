@@ -39,7 +39,8 @@ void Stream::OnUVShutdown(::uv_shutdown_s* request, int status)noexcept
             self->OnError(static_cast<uv_errno_t>(status));
         MOE_UV_CATCH_ALL_END
 
-        self->Close();  // 发生错误时直接关闭Socket
+        if (GetSelf<Stream>(handle) == self)
+            self->Close();  // 发生错误时直接关闭Socket
     }
     else
     {
@@ -66,11 +67,15 @@ void Stream::OnUVWrite(::uv_write_s* request, int status)noexcept
             MOE_UV_CATCH_ALL_END
         }
 
-        MOE_UV_CATCH_ALL_BEGIN
-            self->OnError(static_cast<uv_errno_t>(status));
-        MOE_UV_CATCH_ALL_END
+        if (GetSelf<Stream>(handle) == self)  // 由于穿越回调函数，需要检查所有权
+        {
+            MOE_UV_CATCH_ALL_BEGIN
+                self->OnError(static_cast<uv_errno_t>(status));
+            MOE_UV_CATCH_ALL_END
 
-        self->Close();  // 发生错误时直接关闭Socket
+            if (GetSelf<Stream>(handle) == self)
+                self->Close();  // 发生错误时直接关闭Socket
+        }
     }
     else
     {
@@ -113,7 +118,9 @@ void Stream::OnUVRead(::uv_stream_s* handle, ssize_t nread, const ::uv_buf_t* bu
             else
             {
                 self->OnError(static_cast<uv_errno_t>(nread));
-                self->Close();  // 发生错误时直接关闭Socket
+
+                if (GetSelf<Stream>(handle) == self)
+                    self->Close();  // 发生错误时直接关闭Socket
             }
         MOE_UV_CATCH_ALL_END
     }
