@@ -80,6 +80,7 @@ AsyncHandle& AsyncHandle::operator=(AsyncHandle&& org)noexcept
     {
         Close();
         GetHandle()->data = nullptr;
+        m_pHandle.release();
     }
 
     m_pHandle = std::move(org.m_pHandle);
