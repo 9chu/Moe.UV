@@ -1,5 +1,5 @@
 # Moe.UV
 
-libuv��װ�⡣
+libuv封装库。
 
-�����С�
+开发中。
