@@ -1,7 +1,4 @@
 [submodule "3rd/Moe.Core"]
 	path = 3rd/Moe.Core
-	url = http://git.bakachu.cn/9chu/Moe.Core.git
-[submodule "3rd/Moe.Coroutine"]
-	path = 3rd/Moe.Coroutine
-	url = http://git.bakachu.cn/9chu/Moe.Coroutine.git
+	url = https://github.com/9chu/Moe.Core.git
 	branch = master
