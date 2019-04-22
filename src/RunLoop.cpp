@@ -135,3 +135,8 @@ void RunLoop::UpdateTime()noexcept
 {
     ::uv_update_time(GetHandle());
 }
+
+Time::Tick RunLoop::GetCurrentTime()const noexcept
+{
+    return ::uv_now(GetHandle());
+}

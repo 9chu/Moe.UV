@@ -104,6 +104,11 @@ namespace UV
          */
         void UpdateTime()noexcept;
 
+        /**
+         * @brief 获取当前滴答数
+         */
+        Time::Tick GetCurrentTime()const noexcept;
+
     private:
         ObjectPool& m_stObjectPool;
 

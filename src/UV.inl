@@ -12,6 +12,10 @@
 #undef max
 #endif
 
+#ifdef GetCurrentTime
+#undef GetCurrentTime
+#endif
+
 namespace
 {
     ::uv_loop_t* GetCurrentUVLoop()
